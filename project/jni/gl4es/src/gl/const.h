@@ -2,6 +2,8 @@
 #define GL_QUAD_STRIP 8
 #define GL_POLYGON    9
 
+#define GL_MAJOR_VERSION            0x821B
+#define GL_MINOR_VERSION            0x821C
 /* texture mapping */
 #define GL_TEXTURE_ENV              0x2300
 #define GL_TEXTURE_ENV_MODE         0x2200
@@ -10,6 +12,7 @@
 #define GL_TEXTURE_3D               0x806F
 #define GL_TEXTURE_WRAP_S           0x2802
 #define GL_TEXTURE_WRAP_T           0x2803
+#define GL_TEXTURE_WRAP_R           0x8072
 #define GL_TEXTURE_MAG_FILTER       0x2800
 #define GL_TEXTURE_MIN_FILTER       0x2801
 #define GL_TEXTURE_ENV_COLOR        0x2201
@@ -17,6 +20,7 @@
 #define GL_TEXTURE_GEN_T            0x0C61
 #define GL_TEXTURE_GEN_MODE         0x2500
 #define GL_TEXTURE_BORDER_COLOR     0x1004
+#define GL_TEXTURE_BORDER           0x1005
 #define GL_TEXTURE_WIDTH            0x1000
 #define GL_TEXTURE_HEIGHT           0x1001
 #define GL_TEXTURE_BORDER           0x1005
@@ -57,7 +61,7 @@
 #define GL_TEXTURE_LOD_BIAS         0x8501
 #define GL_TEXTURE_CUBE_MAP         0x8513
 #define GL_TEXTURE_GEN_STR          0x8D60
-
+#define GL_CLAMP_TO_BORDER          0x812D
 
 // GL_ARB_point_sprite
 #define GL_POINT_SPRITE             0x8861
@@ -193,6 +197,11 @@
 #define GL_LINEAR               0x2601
 #define GL_EXP                  0x0800
 #define GL_EXP2                 0x0801
+#define GL_FOG_COORDINATE_SOURCE 0x8450
+#define GL_FOG_COORD_SRC        GL_FOG_COORDINATE_SOURCE
+#define GL_FRAGMENT_DEPTH       0x8452
+#define GL_FOG_COORDINATE       0x8451
+#define GL_FOG_COORD            GL_FOG_COORDINATE
 
 // lighting
 #define GL_LIGHTING             0x0B50
@@ -568,3 +577,35 @@
 #define GL_DEPTH_COMPONENT16              0x81A5
 #define GL_DEPTH_COMPONENT                0x1902
 #define GL_MAX_DRAW_BUFFERS_ARB           0x8824
+
+// direct state
+#define GL_MATRIX0_ARB                    0x88C0
+#define GL_PROGRAM_MATRIX_EXT             0x8E2D
+#define GL_TRANSPOSE_PROGRAM_MATRIX_EXT   0x8E2E
+#define GL_PROGRAM_MATRIX_STACK_DEPTH_EXT 0x8E2F
+#define GL_CURRENT_MATRIX_STACK_DEPTH_ARB 0x8640
+#define GL_TRANSPOSE_CURRENT_MATRIX_ARB   0x88B7
+#define GL_CURRENT_MATRIX_ARB             0x8641
+#define GL_TEXTURE_BUFFER_FORMAT_EXT      0x8C2E
+#define GL_TEXTURE_BUFFER_DATA_STORE_BINDING_EXT 0x8C2D
+#define GL_TEXTURE_BINDING_CUBE_MAP		  0x8514
+#define GL_TEXTURE_BINDING_BUFFER_EXT     0x8C2C
+#define GL_TEXTURE_BINDING_1D			  0x8068
+#define GL_TEXTURE_BINDING_2D			  0x8069
+#define GL_TEXTURE_BINDING_3D             0x806A
+#define GL_TEXTURE_BINDING_2D_ARRAY       0x8C1D
+#define GL_TEXTURE_BINDING_1D_ARRAY       0x8C1C
+#define GL_CURRENT_RASTER_TEXTURE_COORDS  0x0B06
+#define GL_TEXTURE_COORD_ARRAY_COUNT      0x808B
+
+// cube mapping
+#define GL_TEXTURE_CUBE_MAP               0x8513
+#define GL_TEXTURE_BINDING_CUBE_MAP       0x8514
+#define GL_TEXTURE_CUBE_MAP_POSITIVE_X    0x8515
+#define GL_TEXTURE_CUBE_MAP_NEGATIVE_X    0x8516
+#define GL_TEXTURE_CUBE_MAP_POSITIVE_Y    0x8517
+#define GL_TEXTURE_CUBE_MAP_NEGATIVE_Y    0x8518
+#define GL_TEXTURE_CUBE_MAP_POSITIVE_Z    0x8519
+#define GL_TEXTURE_CUBE_MAP_NEGATIVE_Z    0x851A
+#define GL_PROXY_TEXTURE_CUBE_MAP         0x851B
+#define GL_AX_CUBE_MAP_TEXTURE_SIZE       0x851C

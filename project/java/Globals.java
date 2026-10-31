@@ -32,9 +32,14 @@ class Globals
 	public static String ApplicationName = "CommanderGenius";
 	public static String AppLibraries[] = { "sdl-1.2", };
 	public static String AppMainLibraries[] = { "application", "sdl_main" };
-	public static String LibraryNamesMap[][] = { { "crypto", "crypto.so.sdl.1" }, { "ssl", "ssl.so.sdl.1" }, { "curl", "curl-sdl" } }; // Because some libraries are named differently to not clash with system libs
-	public static final boolean Using_SDL_1_3 = false;
-	public static final boolean Using_SDL_2_0 = false;
+	public static String LibraryNamesMap[][] = {
+												{ "crypto", "crypto.so.sdl.1" },
+												{ "ssl", "ssl.so.sdl.1" },
+												{ "curl", "curl-sdl" },
+												{ "expat", "expat-sdl" },
+												{ "sqlite3", "sqlite3-sdl" },
+											}; // Because some libraries are named differently to not clash with system libs
+	public static final boolean UsingSDL2 = false;
 	public static String[] DataDownloadUrl = { "Data files are 2 Mb|https://sourceforge.net/projects/libsdl-android/files/CommanderGenius/commandergenius-data.zip/download", "High-quality GFX and music - 40 Mb|https://sourceforge.net/projects/libsdl-android/files/CommanderGenius/commandergenius-hqp.zip/download" };
 	public static boolean SwVideoMode = false;
 	public static boolean NeedDepthBuffer = false;
@@ -42,7 +47,7 @@ class Globals
 	public static boolean NeedGles2 = false;
 	public static boolean NeedGles3 = false;
 	public static boolean CompatibilityHacksVideo = false;
-	public static boolean CompatibilityHacksForceScreenUpdateMouseClick = true;
+	public static boolean CompatibilityHacksForceScreenUpdateMouseClick = false;
 	public static boolean CompatibilityHacksStaticInit = false;
 	public static boolean CompatibilityHacksTextInputEmulatesHwKeyboard = false;
 	public static int TextInputKeyboard = 0;
@@ -57,6 +62,7 @@ class Globals
 	public static boolean ForceRelativeMouseMode = false; // If both on-screen keyboard and mouse are needed, this will only set the default setting, user may override it later
 	public static boolean ShowMouseCursor = false; // Draw system mouse cursor, if the app does not do it
 	public static boolean ScreenFollowsMouse = false; // Move app screen make mouse cursor always visible, when soft keyboard is shown
+	public static boolean ScreenPinchZoom = false; // Pinch-zoom gesture will zoom the whole screen centered on mouse cursor
 	public static boolean AppNeedsArrowKeys = true;
 	public static boolean AppNeedsTextInput = true;
 	public static boolean AppUsesJoystick = false;
@@ -79,19 +85,22 @@ class Globals
 	public static String AdmobTestDeviceId = "";
 	public static String AdmobBannerSize = "";
 	public static String GooglePlayGameServicesId = "";
+	public static boolean AccessSdCard = false;
 
 	// Phone-specific config, modified by user in "Change phone config" startup dialog
 	public static int VideoDepthBpp = 16;
 	public static boolean HorizontalOrientation = true;
 	public static boolean AutoDetectOrientation = false;
 	public static boolean ImmersiveMode = true;
+	public static boolean DrawInDisplayCutout = false;
+	public static boolean HideSystemMousePointer = false;
 	public static boolean DownloadToSdcard = true;
 	public static boolean PhoneHasArrowKeys = false;
 	public static boolean UseAccelerometerAsArrowKeys = false;
 	public static boolean UseTouchscreenKeyboard = true;
 	public static int TouchscreenKeyboardSize = 1;
 	public static final int TOUCHSCREEN_KEYBOARD_CUSTOM = 4;
-	public static int TouchscreenKeyboardDrawSize = 1;
+	public static int TouchscreenKeyboardDrawSize = 2;
 	public static int TouchscreenKeyboardTheme = 2;
 	public static int TouchscreenKeyboardTransparency = 2;
 	public static boolean FloatingScreenJoystick = false;
@@ -101,7 +110,7 @@ class Globals
 	public static boolean OptionalDataDownload[] = null;
 	public static int LeftClickMethod = ForceRelativeMouseMode ? Mouse.LEFT_CLICK_WITH_TAP_OR_TIMEOUT : Mouse.LEFT_CLICK_NORMAL;
 	public static int LeftClickKey = KeyEvent.KEYCODE_DPAD_CENTER;
-	public static int LeftClickTimeout = 3;
+	public static int LeftClickTimeout = 2;
 	public static int RightClickTimeout = 4;
 	public static int RightClickMethod = AppNeedsTwoButtonMouse ? Mouse.RIGHT_CLICK_WITH_MULTITOUCH : Mouse.RIGHT_CLICK_NONE;
 	public static int RightClickKey = KeyEvent.KEYCODE_MENU;
@@ -112,27 +121,82 @@ class Globals
 	public static int MoveMouseWithGyroscopeSpeed = 2;
 	public static boolean ClickMouseWithDpad = false;
 	public static boolean RelativeMouseMovement = ForceRelativeMouseMode; // Laptop touchpad mode
+	public static boolean ForceHardwareMouse = false;
 	public static int RelativeMouseMovementSpeed = 2;
 	public static int RelativeMouseMovementAccel = 0;
 	public static int ShowScreenUnderFinger = Mouse.ZOOM_NONE;
 	public static int ClickScreenPressure = 0;
 	public static int ClickScreenTouchspotSize = 0;
 	public static boolean FingerHover = true;
-	public static boolean HoverJitterFilter = true;
+	public static boolean HoverJitterFilter = false;
 	public static boolean GenerateSubframeTouchEvents = false;
 	public static boolean KeepAspectRatio = KeepAspectRatioDefaultSetting;
 	public static boolean TvBorders = true;
 	public static int RemapHwKeycode[] = new int[SDL_Keys.JAVA_KEYCODE_LAST];
-	public static int RemapScreenKbKeycode[] = new int[6];
-	public static int ScreenKbControlsLayout[][] =	AppUsesThirdJoystick ? // Values for 800x480 resolution
-													new int[][] { { 0, 303, 177, 480 }, { 0, 0, 48, 48 }, { 400, 392, 488, 480 }, { 312, 392, 400, 480 }, { 400, 304, 488, 392 }, { 312, 304, 400, 392 }, { 400, 216, 488, 304 }, { 312, 216, 400, 304 }, { 623, 303, 800, 480 }, { 623, 126, 800, 303 } } :
-													AppUsesSecondJoystick ?
-													new int[][] { { 0, 303, 177, 480 }, { 0, 0, 48, 48 }, { 400, 392, 488, 480 }, { 312, 392, 400, 480 }, { 400, 304, 488, 392 }, { 312, 304, 400, 392 }, { 400, 216, 488, 304 }, { 312, 216, 400, 304 }, { 623, 303, 800, 480 } } :
-													new int[][] { { 0, 303, 177, 480 }, { 0, 0, 48, 48 }, { 712, 392, 800, 480 }, { 624, 392, 712, 480 }, { 712, 304, 800, 392 }, { 624, 304, 712, 392 }, { 712, 216, 800, 304 }, { 624, 216, 712, 304 } };
+	public static int RemapScreenKbKeycode[] = new int[12];
+	// Values for 800x480 resolution
+	public static int ScreenKbControlsLayout[][] =
+		AppUsesThirdJoystick ? new int[][]
+		{
+			{ 0,   303, 177, 480 }, // Main joystick/DPAD
+			{ 0,   0,   48,  48  }, // Text input button
+			{ 400, 392, 488, 480 }, // Button 0
+			{ 312, 392, 400, 480 }, // Button 1
+			{ 400, 304, 488, 392 }, // Button 2
+			{ 312, 304, 400, 392 }, // Button 3
+			{ 400, 216, 488, 304 }, // Button 4
+			{ 312, 216, 400, 304 }, // Button 5
+			{ 623, 303, 800, 480 }, // Joystick 2
+			{ 623, 126, 800, 303 }, // Joystick 3
+			{ 400, 392, 488, 480 }, // Button 6 - copy of button 0, to be redefined in the code
+			{ 312, 392, 400, 480 }, // Button 7 - copy of button 1, to be redefined in the code
+			{ 400, 304, 488, 392 }, // Button 8 - copy of button 2, to be redefined in the code
+			{ 312, 304, 400, 392 }, // Button 9 - copy of button 3, to be redefined in the code
+			{ 400, 216, 488, 304 }, // Button 10 - copy of button 4, to be redefined in the code
+			{ 312, 216, 400, 304 }, // Button 11 - copy of button 5, to be redefined in the code
+		}
+		: AppUsesSecondJoystick ? new int[][]
+		{
+			{ 0,   303, 177, 480 }, // Main joystick/DPAD
+			{ 0,   0,   48,  48  }, // Text input button
+			{ 400, 392, 488, 480 }, // Button 0
+			{ 312, 392, 400, 480 }, // Button 1
+			{ 400, 304, 488, 392 }, // Button 2
+			{ 312, 304, 400, 392 }, // Button 3
+			{ 400, 216, 488, 304 }, // Button 4
+			{ 312, 216, 400, 304 }, // Button 5
+			{ 623, 303, 800, 480 }, // Joystick 2
+			{ 0,   0,   0,   0,  }, // Joystick 3
+			{ 400, 392, 488, 480 }, // Button 6 - copy of button 0, to be redefined in the code
+			{ 312, 392, 400, 480 }, // Button 7 - copy of button 1, to be redefined in the code
+			{ 400, 304, 488, 392 }, // Button 8 - copy of button 2, to be redefined in the code
+			{ 312, 304, 400, 392 }, // Button 9 - copy of button 3, to be redefined in the code
+			{ 400, 216, 488, 304 }, // Button 10 - copy of button 4, to be redefined in the code
+			{ 312, 216, 400, 304 }, // Button 11 - copy of button 5, to be redefined in the code
+		}
+		: new int[][]
+		{
+			{ 0, 303,   177, 480 }, // Main joystick/DPAD
+			{ 0,   0,   48,  48  }, // Text input button
+			{ 712, 392, 800, 480 }, // Button 0
+			{ 624, 392, 712, 480 }, // Button 1
+			{ 712, 304, 800, 392 }, // Button 2
+			{ 624, 304, 712, 392 }, // Button 3
+			{ 712, 216, 800, 304 }, // Button 4
+			{ 624, 216, 712, 304 }, // Button 5
+			{ 0,   0,   0,   0,  }, // Joystick 2
+			{ 0,   0,   0,   0,  }, // Joystick 3
+			{ 536, 392, 624, 480 }, // Button 6
+			{ 448, 392, 536, 480 }, // Button 7
+			{ 536, 304, 624, 392 }, // Button 8
+			{ 448, 304, 536, 392 }, // Button 9
+			{ 536, 216, 624, 304 }, // Button 10
+			{ 448, 216, 536, 304 }, // Button 11
+		};
 	public static boolean ScreenKbControlsShown[] = new boolean[ScreenKbControlsLayout.length]; /* Also joystick and text input button added */
 	public static int RemapMultitouchGestureKeycode[] = new int[4];
 	public static boolean MultitouchGesturesUsed[] = new boolean[4];
-	public static int MultitouchGestureSensitivity = 1;
+	public static int MultitouchGestureSensitivity = 2;
 	public static int TouchscreenCalibration[] = new int[4];
 	public static String DataDir = new String("");
 	public static boolean VideoLinearFilter = true;

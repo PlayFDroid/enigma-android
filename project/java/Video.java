@@ -33,11 +33,13 @@ import javax.microedition.khronos.egl.EGLDisplay;
 import javax.microedition.khronos.egl.EGLSurface;
 
 import java.io.File;
+import java.io.InputStream;
 import java.util.concurrent.locks.ReentrantLock;
 import java.lang.reflect.Method;
 import java.util.LinkedList;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.zip.GZIPInputStream;
 
 import android.os.Bundle;
 import android.os.Build;
@@ -65,49 +67,21 @@ import android.view.Display;
 import android.net.Uri;
 import android.Manifest;
 import android.content.pm.PackageManager;
+import android.hardware.input.InputManager;
+import android.graphics.Rect;
 
-
-class Mouse
-{
-	public static final int LEFT_CLICK_NORMAL = 0;
-	public static final int LEFT_CLICK_NEAR_CURSOR = 1;
-	public static final int LEFT_CLICK_WITH_MULTITOUCH = 2;
-	public static final int LEFT_CLICK_WITH_PRESSURE = 3;
-	public static final int LEFT_CLICK_WITH_KEY = 4;
-	public static final int LEFT_CLICK_WITH_TIMEOUT = 5;
-	public static final int LEFT_CLICK_WITH_TAP = 6;
-	public static final int LEFT_CLICK_WITH_TAP_OR_TIMEOUT = 7;
-	
-	public static final int RIGHT_CLICK_NONE = 0;
-	public static final int RIGHT_CLICK_WITH_MULTITOUCH = 1;
-	public static final int RIGHT_CLICK_WITH_PRESSURE = 2;
-	public static final int RIGHT_CLICK_WITH_KEY = 3;
-	public static final int RIGHT_CLICK_WITH_TIMEOUT = 4;
-
-	public static final int SDL_FINGER_DOWN = 0;
-	public static final int SDL_FINGER_UP = 1;
-	public static final int SDL_FINGER_MOVE = 2;
-	public static final int SDL_FINGER_HOVER = 3;
-
-	public static final int ZOOM_NONE = 0;
-	public static final int ZOOM_MAGNIFIER = 1;
-
-	public static final int MOUSE_HW_INPUT_FINGER = 0;
-	public static final int MOUSE_HW_INPUT_STYLUS = 1;
-	public static final int MOUSE_HW_INPUT_MOUSE = 2;
-
-	public static final int MAX_HOVER_DISTANCE = 1024;
-	public static final int HOVER_REDRAW_SCREEN = 1024 * 10;
-	public static final float MAX_PRESSURE = 1024.0f;
-}
 
 abstract class DifferentTouchInput
 {
 	public abstract void process(final MotionEvent event);
 	public abstract void processGenericEvent(final MotionEvent event);
 
-	public static int ExternalMouseDetected = 0;
-	
+	public static int ExternalMouseDetected = Mouse.MOUSE_HW_INPUT_FINGER;
+	public static int buttonState = 0;
+
+	public static float capturedMouseX = 0;
+	public static float capturedMouseY = 0;
+
 	public static DifferentTouchInput touchInput = getInstance();
 
 	public static DifferentTouchInput getInstance()
@@ -315,9 +289,15 @@ abstract class DifferentTouchInput
 		}
 		public void process(final MotionEvent event)
 		{
-			int hwMouseEvent = ((event.getSource() & InputDevice.SOURCE_STYLUS) == InputDevice.SOURCE_STYLUS) ? Mouse.MOUSE_HW_INPUT_STYLUS :
-								((event.getSource() & InputDevice.SOURCE_MOUSE) == InputDevice.SOURCE_MOUSE) ? Mouse.MOUSE_HW_INPUT_MOUSE :
+			int hwMouseEvent =  ((event.getSource() & InputDevice.SOURCE_MOUSE) == InputDevice.SOURCE_MOUSE || Globals.ForceHardwareMouse) ? Mouse.MOUSE_HW_INPUT_MOUSE :
+								((event.getSource() & InputDevice.SOURCE_STYLUS) == InputDevice.SOURCE_STYLUS) ? Mouse.MOUSE_HW_INPUT_STYLUS :
 								Mouse.MOUSE_HW_INPUT_FINGER;
+			if( android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O )
+			{
+				if( (event.getSource() & InputDevice.SOURCE_MOUSE_RELATIVE) == InputDevice.SOURCE_MOUSE_RELATIVE )
+					hwMouseEvent = Mouse.MOUSE_HW_INPUT_MOUSE;
+			}
+
 			if( ExternalMouseDetected != hwMouseEvent )
 			{
 				ExternalMouseDetected = hwMouseEvent;
@@ -361,12 +341,10 @@ abstract class DifferentTouchInput
 	}
 	private static class IcsTouchInput extends GingerbreadTouchInput
 	{
-		float hatX = 0.0f, hatY = 0.0f;
 		private static class Holder
 		{
 			private static final IcsTouchInput sInstance = new IcsTouchInput();
 		}
-		private int buttonState = 0;
 		public void process(final MotionEvent event)
 		{
 			//Log.i("SDL", "Got motion event, type " + (int)(event.getAction()) + " X " + (int)event.getX() + " Y " + (int)event.getY() + " buttons " + buttonState + " source " + event.getSource());
@@ -388,37 +366,16 @@ abstract class DifferentTouchInput
 		}
 		public void processGenericEvent(final MotionEvent event)
 		{
-			// Joysticks are supported since Honeycomb, but I don't care about it, because very little devices have it
+			// Joysticks are supported since Honeycomb, but I don't care about it, because very few devices have it
 			if( (event.getSource() & InputDevice.SOURCE_CLASS_JOYSTICK) == InputDevice.SOURCE_CLASS_JOYSTICK )
 			{
 				// event.getAxisValue(AXIS_HAT_X) and event.getAxisValue(AXIS_HAT_Y) are joystick arrow keys, on Nvidia Shield and some other joysticks
-				if( event.getAxisValue(MotionEvent.AXIS_HAT_X) != hatX )
-				{
-					hatX = event.getAxisValue(MotionEvent.AXIS_HAT_X);
-					if( hatX == 0.0f )
-					{
-						DemoGLSurfaceView.nativeKey(KeyEvent.KEYCODE_DPAD_LEFT, 0, 0);
-						DemoGLSurfaceView.nativeKey(KeyEvent.KEYCODE_DPAD_RIGHT, 0, 0);
-					}
-					else
-						DemoGLSurfaceView.nativeKey(hatX < 0.0f ? KeyEvent.KEYCODE_DPAD_LEFT : KeyEvent.KEYCODE_DPAD_RIGHT, 1, 0);
-				}
-				if( event.getAxisValue(MotionEvent.AXIS_HAT_Y) != hatY )
-				{
-					hatY = event.getAxisValue(MotionEvent.AXIS_HAT_Y);
-					if( hatY == 0.0f )
-					{
-						DemoGLSurfaceView.nativeKey(KeyEvent.KEYCODE_DPAD_UP, 0, 0);
-						DemoGLSurfaceView.nativeKey(KeyEvent.KEYCODE_DPAD_DOWN, 0, 0);
-					}
-					else
-						DemoGLSurfaceView.nativeKey(hatY < 0.0f ? KeyEvent.KEYCODE_DPAD_UP : KeyEvent.KEYCODE_DPAD_DOWN, 1, 0);
-				}
 				DemoGLSurfaceView.nativeGamepadAnalogJoystickInput(
 					event.getAxisValue(MotionEvent.AXIS_X), event.getAxisValue(MotionEvent.AXIS_Y),
 					event.getAxisValue(MotionEvent.AXIS_Z), event.getAxisValue(MotionEvent.AXIS_RZ),
-					 event.getAxisValue(MotionEvent.AXIS_LTRIGGER), event.getAxisValue(MotionEvent.AXIS_RTRIGGER),
-					(hatX == 0.0f && hatY == 0.0f) ? 0 : 1 );
+					event.getAxisValue(MotionEvent.AXIS_LTRIGGER), event.getAxisValue(MotionEvent.AXIS_RTRIGGER),
+					event.getAxisValue(MotionEvent.AXIS_HAT_X), event.getAxisValue(MotionEvent.AXIS_HAT_Y),
+					processGamepadDeviceId(event.getDevice()) );
 				return;
 			}
 			// Process mousewheel
@@ -573,6 +530,78 @@ abstract class DifferentTouchInput
 			}
 		}
 	}
+
+	private static int gamepadIds[] = new int[4]; // Maximum 4 gamepads at the moment
+
+	public static int processGamepadDeviceId(InputDevice device)
+	{
+		if( device == null )
+			return 0;
+		int source = device.getSources();
+		if( (source & InputDevice.SOURCE_CLASS_JOYSTICK) != InputDevice.SOURCE_CLASS_JOYSTICK &&
+			(source & InputDevice.SOURCE_GAMEPAD) != InputDevice.SOURCE_GAMEPAD )
+		{
+			return 0;
+		}
+		int deviceId = device.getId();
+		for( int i = 0; i < gamepadIds.length; i++ )
+		{
+			if (gamepadIds[i] == deviceId)
+				return i + 1;
+		}
+		for( int i = 0; i < gamepadIds.length; i++ )
+		{
+			if (gamepadIds[i] == 0)
+			{
+				Log.i("SDL", "libSDL: gamepad added: deviceId " + deviceId + " gamepadId " + (i + 1));
+				gamepadIds[i] = deviceId;
+				return i + 1;
+			}
+		}
+		return 0;
+	}
+
+	public static void registerInputManagerCallbacks(Context context)
+	{
+		if( android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.JELLY_BEAN )
+		{
+			JellyBeanInputManager.Holder.sInstance.register(context);
+		}
+	}
+
+	private static class JellyBeanInputManager
+	{
+		private static class Holder
+		{
+			private static final JellyBeanInputManager sInstance = new JellyBeanInputManager();
+		}
+		private static class Listener implements InputManager.InputDeviceListener
+		{
+			public void onInputDeviceAdded(int deviceId)
+			{
+			}
+			public void onInputDeviceChanged(int deviceId)
+			{
+				onInputDeviceRemoved(deviceId);
+			}
+			public void onInputDeviceRemoved(int deviceId)
+			{
+				for( int i = 0; i < gamepadIds.length; i++ )
+				{
+					if (gamepadIds[i] == deviceId)
+					{
+						Log.i("SDL", "libSDL: gamepad removed: deviceId " + deviceId + " gamepadId "+ (i + 1));
+						gamepadIds[i] = 0;
+					}
+				}
+			}
+		}
+		public void register(Context context)
+		{
+			InputManager manager = (InputManager) context.getSystemService(Context.INPUT_SERVICE);
+			manager.registerInputDeviceListener(new Listener(), null);
+		}
+	}
 }
 
 class DemoRenderer extends GLSurfaceView_SDL.Renderer
@@ -612,8 +641,10 @@ class DemoRenderer extends GLSurfaceView_SDL.Renderer
 		mWidth = w - w % 2;
 		mHeight = h - h % 2;
 		mGl = gl;
-		Log.i("SDL", "libSDL: DemoRenderer.onSurfaceChanged(): keep aspect ratio=" + Globals.KeepAspectRatio);
-		nativeResize(mWidth, mHeight, 0);
+		nativeResize(mWidth, mHeight, Globals.KeepAspectRatio ? 1 : 0);
+		if( Globals.TouchscreenCalibration[2] > Globals.TouchscreenCalibration[0] )
+			Settings.nativeSetTouchscreenCalibration(Globals.TouchscreenCalibration[0], Globals.TouchscreenCalibration[1],
+				Globals.TouchscreenCalibration[2], Globals.TouchscreenCalibration[3]);
 	}
 
 	int mLastPendingResize = 0;
@@ -645,30 +676,8 @@ class DemoRenderer extends GLSurfaceView_SDL.Renderer
 				if (mWidth != 0 && mHeight != 0 && (mWidth != ww || mHeight != hh))
 				{
 					Log.i("SDL", "libSDL: DemoRenderer.onWindowResize(): screen size changed from " + mWidth + "x" + mHeight + " to " + ww + "x" + hh);
-					if (Globals.SwVideoMode &&
-						(Math.abs(display.getWidth() - ww) > display.getWidth() / 10 ||
-						Math.abs(display.getHeight() - hh) > display.getHeight() / 10))
-					{
-						Log.i("SDL", "Multiwindow detected - enabling screen orientation autodetection");
-						Globals.AutoDetectOrientation = true;
-						context.setScreenOrientation();
-						DemoRenderer.super.ResetVideoSurface();
-						DemoRenderer.super.onWindowResize(ww, hh);
-					}
-					else
-					{
-						Log.i("SDL", "System button bar hidden - re-init video to avoid black bar at the top");
-						DemoRenderer.super.ResetVideoSurface();
-						DemoRenderer.super.onWindowResize(ww, hh);
-					}
-				}
-				if (mWidth == 0 && mHeight == 0)
-				{
-					if ((ww > hh) != (display.getWidth() > display.getHeight()))
-					{
-						Log.i("SDL", "Multiwindow detected - app window size " + ww + "x" + hh + " but display dimensions are " + display.getWidth() + "x" + display.getHeight());
-						Globals.AutoDetectOrientation = true;
-					}
+					DemoRenderer.super.ResetVideoSurface();
+					DemoRenderer.super.onWindowResize(ww, hh);
 				}
 				if (Globals.AutoDetectOrientation && (ww > hh) != (mWidth > mHeight))
 					Globals.HorizontalOrientation = (ww > hh);
@@ -706,14 +715,21 @@ class DemoRenderer extends GLSurfaceView_SDL.Renderer
 		Settings.nativeSetEnv( "DISPLAY_RESOLUTION_HEIGHT", String.valueOf(Math.min(mWidth, mHeight)) ); // In Kitkat with immersive mode, getWindowManager().getDefaultDisplay().getMetrics() return inaccurate height
 
 		accelerometer = new AccelerometerReader(context);
-		if( Globals.MoveMouseWithGyroscope || Globals.AppUsesGyroscope )
+		if( Globals.MoveMouseWithGyroscope )
 			startAccelerometerGyroscope(1);
 		// Tweak video thread priority, if user selected big audio buffer
 		if( Globals.AudioBufferConfig >= 2 )
 			Thread.currentThread().setPriority( (Thread.NORM_PRIORITY + Thread.MIN_PRIORITY) / 2 ); // Lower than normal
-		 // Calls main() and never returns, hehe - we'll call eglSwapBuffers() from native code
+		// Calls main() and never returns, hehe - we'll call eglSwapBuffers() from native code
+		String commandline = Globals.CommandLine;
+		if( context.getIntent() != null && context.getIntent().getScheme() != null &&
+			context.getIntent().getScheme().compareTo(android.content.ContentResolver.SCHEME_FILE) == 0 &&
+			context.getIntent().getData() != null && context.getIntent().getData().getPath() != null )
+		{
+			commandline += " " + context.getIntent().getData().getPath();
+		}
 		nativeInit( Globals.DataDir,
-					Globals.CommandLine,
+					commandline,
 					( (Globals.SwVideoMode && Globals.MultiThreadedVideo) || Globals.CompatibilityHacksVideo ) ? 1 : 0,
 					0 );
 		System.exit(0); // The main() returns here - I don't bother with deinit stuff, just terminate process
@@ -723,35 +739,30 @@ class DemoRenderer extends GLSurfaceView_SDL.Renderer
 	{
 		if( ! super.SwapBuffers() && Globals.NonBlockingSwapBuffers )
 		{
-			if(mRatelimitTouchEvents)
-			{
-				synchronized(this)
-				{
-					this.notify();
-				}
-			}
 			return 0;
 		}
 
 		if(mGlContextLost) {
 			mGlContextLost = false;
-			Settings.SetupTouchscreenKeyboardGraphics(context); // Reload on-screen buttons graphics
+			DemoGLSurfaceView.SetupTouchscreenKeyboardGraphics(context); // Reload on-screen buttons graphics
 			super.SwapBuffers();
 		}
 
 		// Unblock event processing thread only after we've finished rendering
-		if(mRatelimitTouchEvents)
-		{
-			synchronized(this)
-			{
-				this.notify();
-			}
-		}
 		if( context.isScreenKeyboardShown() && !context.keyboardWithoutTextInputShown )
 		{
 			try {
 				Thread.sleep(50); // Give some time to the keyboard input thread
 			} catch(Exception e) { };
+		}
+
+		// We will not receive onConfigurationChanged() inside MainActivity with SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+		// so we need to create a hacky frame counter to update screen orientation, because this call takes up some time
+		mOrientationFrameHackyCounter++;
+		if( mOrientationFrameHackyCounter > 100 )
+		{
+			mOrientationFrameHackyCounter = 0;
+			context.updateScreenOrientation();
 		}
 
 		return 1;
@@ -826,6 +837,12 @@ class DemoRenderer extends GLSurfaceView_SDL.Renderer
 	public void setClipboardText(final String s) // Called from native code
 	{
 		Clipboard.get().set(context, s);
+	}
+
+	public void setCapturedMousePosition(int x, int y) // Called from native code
+	{
+		DifferentTouchInput.capturedMouseX = x;
+		DifferentTouchInput.capturedMouseY = y;
 	}
 
 	public void exitApp()
@@ -928,6 +945,11 @@ class DemoRenderer extends GLSurfaceView_SDL.Renderer
 		}
 	}
 
+	public void setSystemMousePointerVisible(int visible)
+	{
+		context.setSystemMousePointerVisible(visible);
+	}
+
 	public void restartMyself(String restartParams)
 	{
 		Intent intent = new Intent(context, RestartMainActivity.class);
@@ -951,7 +973,7 @@ class DemoRenderer extends GLSurfaceView_SDL.Renderer
 
 	private native void nativeInitJavaCallbacks();
 	private native void nativeInit(String CurrentPath, String CommandLine, int multiThreadedVideo, int unused);
-	private native void nativeResize(int w, int h, int keepAspectRatio);
+	public static native void nativeResize(int w, int h, int keepAspectRatio);
 	private native void nativeDone();
 	private native void nativeGlContextLost();
 	public native void nativeGlContextRecreated();
@@ -974,32 +996,129 @@ class DemoRenderer extends GLSurfaceView_SDL.Renderer
 	private boolean mFirstTimeStart = true;
 	public int mWidth = 0;
 	public int mHeight = 0;
-
-	public static final boolean mRatelimitTouchEvents = true; //(Build.VERSION.SDK_INT >= Build.VERSION_CODES.FROYO);
+	int mOrientationFrameHackyCounter = 0;
 }
 
 class DemoGLSurfaceView extends GLSurfaceView_SDL {
+
 	public DemoGLSurfaceView(MainActivity context) {
 		super(context);
 		mParent = context;
 		setEGLConfigChooser(Globals.VideoDepthBpp, Globals.NeedDepthBuffer, Globals.NeedStencilBuffer, Globals.NeedGles2, Globals.NeedGles3);
 		mRenderer = new DemoRenderer(context);
 		setRenderer(mRenderer);
+		DifferentTouchInput.registerInputManagerCallbacks(context);
+		setContentDescription(context.getResources().getString(R.string.app_name));
 	}
 
 	@Override
-	public boolean onTouchEvent(final MotionEvent event) 
+	public boolean onKeyDown(int keyCode, final KeyEvent event)
 	{
-		if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.ICE_CREAM_SANDWICH)
+		//Log.v("SDL", "DemoGLSurfaceView::onKeyDown(): keyCode " + keyCode + " event.getSource() " + event.getSource());
+		if( keyCode == KeyEvent.KEYCODE_BACK )
+		{
+			boolean mouseInput = false;
+			if( (event.getSource() & InputDevice.SOURCE_MOUSE) == InputDevice.SOURCE_MOUSE )
+				mouseInput = true;
+			if( android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O )
+			{
+				if( (event.getSource() & InputDevice.SOURCE_MOUSE_RELATIVE) == InputDevice.SOURCE_MOUSE_RELATIVE )
+					mouseInput = true;
+			}
+			if( mouseInput )
+			{
+				// Stupid Samsung and stupid Acer remaps right mouse button to BACK key
+				nativeMouseButtonsPressed(2, 1);
+				return true;
+			}
+			else if( mParent.keyboardWithoutTextInputShown )
+			{
+				return true;
+			}
+		}
+
+		if( nativeKey( keyCode, 1, event.getUnicodeChar(), DifferentTouchInput.processGamepadDeviceId(event.getDevice()) ) == 0 )
+			return super.onKeyDown(keyCode, event);
+
+		return true;
+	}
+	
+	@Override
+	public boolean onKeyUp(int keyCode, final KeyEvent event)
+	{
+		if( keyCode == KeyEvent.KEYCODE_BACK )
+		{
+			boolean mouseInput = false;
+			if( (event.getSource() & InputDevice.SOURCE_MOUSE) == InputDevice.SOURCE_MOUSE )
+				mouseInput = true;
+			if( android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O )
+			{
+				if( (event.getSource() & InputDevice.SOURCE_MOUSE_RELATIVE) == InputDevice.SOURCE_MOUSE_RELATIVE )
+					mouseInput = true;
+			}
+			if( mouseInput )
+			{
+				// Stupid Samsung and stupid Acer remaps right mouse button to BACK key
+				nativeMouseButtonsPressed(2, 0);
+				return true;
+			}
+			else if( mParent.keyboardWithoutTextInputShown )
+			{
+				mParent.showScreenKeyboardWithoutTextInputField(0); // Hide keyboard
+				return true;
+			}
+		}
+
+		if( nativeKey( keyCode, 0, event.getUnicodeChar(), DifferentTouchInput.processGamepadDeviceId(event.getDevice()) ) == 0 )
+			return super.onKeyUp(keyCode, event);
+
+		return true;
+	}
+
+	// Android 16 enables predictive back by default for targetSdk 36 and higher,
+	// and then KEYCODE_BACK is no longer delivered to onKeyDown()/onKeyUp().
+	// MainActivity calls this from its OnBackInvokedCallback instead.
+	// Returns false when the app did not handle the key, so the caller can fall
+	// back to the default behaviour, the same way super.onKeyUp() would.
+	public boolean deliverBackKey()
+	{
+		if( nativeKey( KeyEvent.KEYCODE_BACK, 1, 0, 0 ) == 0 )
+			return false;
+		nativeKey( KeyEvent.KEYCODE_BACK, 0, 0, 0 );
+		return true;
+	}
+
+	@Override
+	public boolean onKeyMultiple(int keyCode, int repeatCount, final KeyEvent event)
+	{
+		if( event.getCharacters() != null )
+		{
+			// Non-English text input
+			for( int i = 0; i < event.getCharacters().length(); i++ )
+			{
+				nativeKey( event.getKeyCode(), 1, event.getCharacters().codePointAt(i), 0 );
+				nativeKey( event.getKeyCode(), 0, event.getCharacters().codePointAt(i), 0 );
+			}
+		}
+		return true;
+	}
+
+	@Override
+	public boolean onTouchEvent(final MotionEvent event)
+	{
+		if( mParent.keyboardWithoutTextInputShown && mParent._screenKeyboard != null &&
+			mParent._screenKeyboard.getY() <= event.getY() )
+		{
+			event.offsetLocation(-mParent._screenKeyboard.getX(), -mParent._screenKeyboard.getY());
+			mParent._screenKeyboard.onTouchEvent(event);
+			return true;
+		}
+		if( android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.ICE_CREAM_SANDWICH )
 		{
 			if (getX() != 0)
 				event.offsetLocation(-getX(), -getY());
 		}
 		DifferentTouchInput.touchInput.process(event);
-		if( DemoRenderer.mRatelimitTouchEvents )
-		{
-			limitEventRate(event);
-		}
 		return true;
 	};
 
@@ -1007,33 +1126,47 @@ class DemoGLSurfaceView extends GLSurfaceView_SDL {
 	public boolean onGenericMotionEvent (final MotionEvent event)
 	{
 		DifferentTouchInput.touchInput.processGenericEvent(event);
-		if( DemoRenderer.mRatelimitTouchEvents )
-		{
-			limitEventRate(event);
-		}
 		return true;
 	}
-	
-	public void limitEventRate(final MotionEvent event)
+
+	@Override
+	public boolean onCapturedPointerEvent (final MotionEvent event)
 	{
-		// Wait a bit, and try to synchronize to app framerate, or event thread will eat all CPU and we'll lose FPS
-		// With Froyo the rate of touch events seems to be limited by OS, but they are arriving faster then we're redrawing anyway
-		if((event.getAction() == MotionEvent.ACTION_MOVE ||
-			event.getAction() == MotionEvent.ACTION_HOVER_MOVE))
-		{
-			synchronized(mRenderer)
-			{
-				try
-				{
-					mRenderer.wait(300L); // And sometimes the app decides not to render at all, so this timeout should not be big.
-				}
-				catch (InterruptedException e)
-				{
-					Log.v("SDL", "DemoGLSurfaceView::limitEventRate(): Who dared to interrupt my slumber?");
-					Thread.interrupted();
-				}
-			}
-		}
+		DifferentTouchInput.capturedMouseX += event.getX();
+		DifferentTouchInput.capturedMouseY += event.getY();
+		if (DifferentTouchInput.capturedMouseX < 0)
+			DifferentTouchInput.capturedMouseX = 0;
+		if (DifferentTouchInput.capturedMouseY < 0)
+			DifferentTouchInput.capturedMouseY = 0;
+		if (DifferentTouchInput.capturedMouseX >= this.getWidth())
+			DifferentTouchInput.capturedMouseX = this.getWidth() - 1;
+		if (DifferentTouchInput.capturedMouseY >= this.getHeight())
+			DifferentTouchInput.capturedMouseY = this.getHeight() - 1;
+
+		//Log.v("SDL", "SDL DemoGLSurfaceView::onCapturedPointerEvent(): X " + DifferentTouchInput.capturedMouseX + " Y " + DifferentTouchInput.capturedMouseY +
+		//				" W " + this.getWidth() + " H " + this.getHeight() + " getX " + event.getX() + " getY " + event.getY() +
+		//				" RelX " + event.getAxisValue(MotionEvent.AXIS_RELATIVE_X) + " RelY " + event.getAxisValue(MotionEvent.AXIS_RELATIVE_Y) );
+
+		event.setLocation(DifferentTouchInput.capturedMouseX, DifferentTouchInput.capturedMouseY);
+		event.setAction(MotionEvent.ACTION_HOVER_MOVE);
+
+		int scrollX = Math.round(event.getAxisValue(MotionEvent.AXIS_HSCROLL));
+		int scrollY = Math.round(event.getAxisValue(MotionEvent.AXIS_VSCROLL));
+		if (scrollX != 0 || scrollY != 0)
+			DemoGLSurfaceView.nativeMouseWheel(scrollX, scrollY);
+
+		//Log.v("SDL", "DemoGLSurfaceView::onCapturedPointerEvent(): XY " + event.getX() + " " + event.getY() + " action " + event.getAction() + " scroll " + scrollX + " " + scrollY);
+
+		return this.onTouchEvent(event);
+	}
+
+	@Override
+	public void onPointerCaptureChange (boolean hasCapture)
+	{
+		Log.v("SDL", "DemoGLSurfaceView::onPointerCaptureChange(): " + hasCapture);
+		super.onPointerCaptureChange(hasCapture);
+		DifferentTouchInput.capturedMouseX = this.getWidth() / 2;
+		DifferentTouchInput.capturedMouseY = this.getHeight() / 2;
 	}
 
 	public void exitApp() {
@@ -1067,17 +1200,110 @@ class DemoGLSurfaceView extends GLSurfaceView_SDL {
 			mRenderer.nativeGlContextRecreated();
 		if( mRenderer.accelerometer != null && mRenderer.accelerometer.openedBySDL ) // For some reason it crashes here often - are we getting this event before initialization?
 			mRenderer.accelerometer.start();
+		captureMouse(true);
 	};
+
+	public void captureMouse(boolean capture)
+	{
+		if( capture )
+		{
+			setFocusableInTouchMode(true);
+			setFocusable(true);
+			requestFocus();
+			if( Globals.HideSystemMousePointer && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O )
+			{
+				postDelayed( new Runnable()
+				{
+					public void run()
+					{
+						Log.v("SDL", "captureMouse::requestPointerCapture() delayed");
+						requestPointerCapture();
+					}
+				}, 50 );
+			}
+		}
+		else
+		{
+			if( Globals.HideSystemMousePointer && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O )
+			{
+				postDelayed( new Runnable()
+				{
+					public void run()
+					{
+						Log.v("SDL", "captureMouse::releasePointerCapture()");
+						releasePointerCapture();
+					}
+				}, 50 );
+			}
+		}
+	}
+
+	static byte [] loadRaw(Activity p, int res)
+	{
+		byte [] buf = new byte[65536 * 2];
+		byte [] a = new byte[1048576 * 5]; // We need 5Mb buffer for Keen theme, and this Java code is inefficient
+		int written = 0;
+		try{
+			InputStream is = new GZIPInputStream(p.getResources().openRawResource(res));
+			int readed = 0;
+			while( (readed = is.read(buf)) >= 0 )
+			{
+				if( written + readed > a.length )
+				{
+					byte [] b = new byte [written + readed];
+					System.arraycopy(a, 0, b, 0, written);
+					a = b;
+				}
+				System.arraycopy(buf, 0, a, written, readed);
+				written += readed;
+			}
+		} catch(Exception e) {};
+		byte [] b = new byte [written];
+		System.arraycopy(a, 0, b, 0, written);
+		return b;
+	}
+	
+	static void SetupTouchscreenKeyboardGraphics(Activity p)
+	{
+		if( Globals.UseTouchscreenKeyboard )
+		{
+			if(Globals.TouchscreenKeyboardTheme < 0)
+				Globals.TouchscreenKeyboardTheme = 0;
+			if(Globals.TouchscreenKeyboardTheme > 9)
+				Globals.TouchscreenKeyboardTheme = 9;
+
+			if( Globals.TouchscreenKeyboardTheme == 0 )
+				Settings.nativeSetupScreenKeyboardButtons(loadRaw(p, R.raw.ultimatedroid));
+			if( Globals.TouchscreenKeyboardTheme == 1 )
+				Settings.nativeSetupScreenKeyboardButtons(loadRaw(p, R.raw.simpletheme));
+			if( Globals.TouchscreenKeyboardTheme == 2 )
+				Settings.nativeSetupScreenKeyboardButtons(loadRaw(p, R.raw.sun));
+			if( Globals.TouchscreenKeyboardTheme == 3 )
+				Settings.nativeSetupScreenKeyboardButtons(loadRaw(p, R.raw.keen));
+			if( Globals.TouchscreenKeyboardTheme == 4 )
+				Settings.nativeSetupScreenKeyboardButtons(loadRaw(p, R.raw.retro));
+			if( Globals.TouchscreenKeyboardTheme == 5 )
+				Settings.nativeSetupScreenKeyboardButtons(loadRaw(p, R.raw.gba));
+			if( Globals.TouchscreenKeyboardTheme == 6 )
+				Settings.nativeSetupScreenKeyboardButtons(loadRaw(p, R.raw.psx));
+			if( Globals.TouchscreenKeyboardTheme == 7 )
+				Settings.nativeSetupScreenKeyboardButtons(loadRaw(p, R.raw.snes));
+			if( Globals.TouchscreenKeyboardTheme == 8 )
+				Settings.nativeSetupScreenKeyboardButtons(loadRaw(p, R.raw.dualshock));
+			if( Globals.TouchscreenKeyboardTheme == 9 )
+				Settings.nativeSetupScreenKeyboardButtons(loadRaw(p, R.raw.n64));
+		}
+	}
 
 	DemoRenderer mRenderer;
 	MainActivity mParent;
 
 	public static native void nativeMotionEvent( int x, int y, int action, int pointerId, int pressure, int radius );
-	public static native int  nativeKey( int keyCode, int down, int unicode );
+	public static native int  nativeKey( int keyCode, int down, int unicode, int gamepadId );
 	public static native void nativeHardwareMouseDetected( int detected );
 	public static native void nativeMouseButtonsPressed( int buttonId, int pressedState );
 	public static native void nativeMouseWheel( int scrollX, int scrollY );
-	public static native void nativeGamepadAnalogJoystickInput( float stick1x, float stick1y, float stick2x, float stick2y, float ltrigger, float rtrigger, int usingHat );
+	public static native void nativeGamepadAnalogJoystickInput( float stick1x, float stick1y, float stick2x, float stick2y, float ltrigger, float rtrigger, float dpadx, float dpady, int gamepadId );
 	public static native void nativeScreenVisibleRect( int x, int y, int w, int h );
 	public static native void nativeScreenKeyboardShown( int shown );
 }

@@ -67,6 +67,8 @@ int SDL_ANDROID_ScreenKeep43Ratio = 0;
 SDL_Rect SDL_ANDROID_ForceClearScreenRect[4] = { { 0, 0, 0, 0 }, { 0, 0, 0, 0 }, { 0, 0, 0, 0 }, { 0, 0, 0, 0 } };
 int SDL_ANDROID_ForceClearScreenRectAmount = 0;
 
+float SDL_ANDROID_PinchZoomRatio = 1.0f;
+
 // Extremely wicked JNI environment to call Java functions from C code
 static jclass JavaRendererClass = NULL;
 static jobject JavaRenderer = NULL;
@@ -89,6 +91,8 @@ static jmethodID JavaRequestCloudLoad = NULL;
 static jmethodID JavaRequestOpenExternalApp = NULL;
 static jmethodID JavaRequestRestartMyself = NULL;
 static jmethodID JavaRequestSetConfigOption = NULL;
+static jmethodID JavaSetSystemMousePointerVisible = NULL;
+static jmethodID JavaSetCapturedMousePosition = NULL;
 static int glContextLost = 0;
 static int showScreenKeyboardDeferred = 0;
 static const char * showScreenKeyboardOldText = "";
@@ -196,10 +200,11 @@ JAVA_EXPORT_NAME(DemoRenderer_nativeResize) ( JNIEnv*  env, jobject  thiz, jint 
 	SDL_ANDROID_sRealWindowHeight = h;
 	SDL_ANDROID_sWindowWidth = w;
 	SDL_ANDROID_sWindowHeight = h;
-	SDL_ANDROID_TouchscreenCalibrationWidth = SDL_ANDROID_sWindowWidth;
-	SDL_ANDROID_TouchscreenCalibrationHeight = SDL_ANDROID_sWindowHeight;
 	SDL_ANDROID_ScreenKeep43Ratio = keepRatio;
-	__android_log_print(ANDROID_LOG_INFO, "libSDL", "Physical screen resolution is %dx%d", w, h );
+	if( SDL_ANDROID_ScreenKeep43Ratio )
+		SDL_ANDROID_sWindowWidth = (SDL_ANDROID_sFakeWindowWidth * SDL_ANDROID_sRealWindowHeight) / SDL_ANDROID_sFakeWindowHeight;
+
+	__android_log_print(ANDROID_LOG_INFO, "libSDL", "Physical screen resolution is %dx%d 43Ratio %d", w, h, keepRatio);
 }
 
 JNIEXPORT void JNICALL 
@@ -266,14 +271,24 @@ extern int SDL_Flip(SDL_Surface *screen);
 extern SDL_Surface *SDL_GetVideoSurface(void);
 #endif
 
+JNIEXPORT void JNICALL
+JAVA_EXPORT_NAME(DemoGLSurfaceView_nativeMotionEvent) ( JNIEnv*  env, jobject  thiz, jint x, jint y, jint action, jint pointerId, jint force, jint radius );
+
 void SDL_ANDROID_CallJavaShowScreenKeyboard(const char * oldText, char * outBuf, int outBufLen, int async)
 {
+	int i;
 	JNIEnv *JavaEnv = GetJavaEnv();
 
 	// Clear mouse button state, to avoid repeated clicks on the text field in some apps
 	SDL_ANDROID_MainThreadPushMouseButton( SDL_RELEASED, SDL_BUTTON_LEFT );
 	SDL_ANDROID_MainThreadPushMouseButton( SDL_RELEASED, SDL_BUTTON_RIGHT );
 	SDL_ANDROID_MainThreadPushMouseButton( SDL_RELEASED, SDL_BUTTON_MIDDLE );
+	//__android_log_print(ANDROID_LOG_INFO, "libSDL", "Releasing all touch pointers: mouse at %4d %4d", SDL_ANDROID_currentMouseX, SDL_ANDROID_currentMouseY);
+	JAVA_EXPORT_NAME(DemoGLSurfaceView_nativeMotionEvent) ( NULL, NULL, SDL_ANDROID_currentMouseX, SDL_ANDROID_currentMouseY, MOUSE_UP, 0, 0, 0 );
+	for (i = 1; i < MAX_MULTITOUCH_POINTERS; i++)
+	{
+		JAVA_EXPORT_NAME(DemoGLSurfaceView_nativeMotionEvent) ( NULL, NULL, 0, 0, MOUSE_UP, i, 0, 0 );
+	}
 
 	SDL_ANDROID_TextInputFinished = 0;
 	SDL_ANDROID_IsScreenKeyboardShownFlag = 1;
@@ -327,7 +342,7 @@ void SDL_ANDROID_CallJavaHideScreenKeyboard()
 
 int SDL_ANDROID_IsScreenKeyboardShown()
 {
-	return SDL_ANDROID_IsScreenKeyboardShownFlag;
+	return SDL_ANDROID_IsScreenKeyboardShownFlag || SDL_ANDROID_AsyncTextInputActive;
 }
 
 JNIEXPORT void JNICALL
@@ -383,7 +398,9 @@ JAVA_EXPORT_NAME(DemoRenderer_nativeInitJavaCallbacks) ( JNIEnv*  env, jobject t
 	JavaRequestOpenExternalApp = (*JavaEnv)->GetMethodID(JavaEnv, JavaRendererClass, "openExternalApp", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
 	JavaRequestRestartMyself = (*JavaEnv)->GetMethodID(JavaEnv, JavaRendererClass, "restartMyself", "(Ljava/lang/String;)V");
 	JavaRequestSetConfigOption = (*JavaEnv)->GetMethodID(JavaEnv, JavaRendererClass, "setConfigOptionFromSDL", "(II)V");
-	
+	JavaSetSystemMousePointerVisible = (*JavaEnv)->GetMethodID(JavaEnv, JavaRendererClass, "setSystemMousePointerVisible", "(I)V");
+	JavaSetCapturedMousePosition = (*JavaEnv)->GetMethodID(JavaEnv, JavaRendererClass, "setCapturedMousePosition", "(II)V");
+
 	ANDROID_InitOSKeymap();
 }
 
@@ -561,7 +578,7 @@ int SDLCALL SDL_ANDROID_CloudSave(const char *filename, const char *saveId, cons
 									const char *description, const char *screenshotFile, uint64_t playedTimeMs)
 {
 	JNIEnv *JavaEnv = GetJavaEnv();
-	__android_log_print(ANDROID_LOG_INFO, "libSDL", "SDL_ANDROID_CloudSave: played time %llu", playedTimeMs);
+	//__android_log_print(ANDROID_LOG_INFO, "libSDL", "SDL_ANDROID_CloudSave: played time %llu", playedTimeMs);
 	if( !filename )
 		return 0;
 	if( !saveId )
@@ -642,6 +659,18 @@ void SDLCALL SDL_ANDROID_SetConfigOption(int option, int value)
 void SDLCALL SDL_ANDROID_OpenExternalWebBrowser(const char *url)
 {
 	SDL_ANDROID_OpenExternalApp(NULL, NULL, url);
+}
+
+void SDLCALL SDL_ANDROID_SetSystemMousePointerVisible(int visible)
+{
+	JNIEnv *JavaEnv = GetJavaEnv();
+	(*JavaEnv)->CallVoidMethod( JavaEnv, JavaRenderer, JavaSetSystemMousePointerVisible, (jint)visible );
+}
+
+void SDLCALL SDL_ANDROID_SetCapturedMousePosition(int x, int y)
+{
+	JNIEnv *JavaEnv = GetJavaEnv();
+	(*JavaEnv)->CallVoidMethod( JavaEnv, JavaRenderer, JavaSetCapturedMousePosition, (jint)x, (jint)y );
 }
 
 // Dummy callback for SDL2 to satisfy linker

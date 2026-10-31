@@ -31,12 +31,21 @@ static void fast_math() {
 void load_libs();
 void glx_init();
 
+#ifdef NO_INIT_CONSTRUCTOR
+__attribute__((visibility("default")))
+#else
 __attribute__((constructor))
+#endif
 void initialize_gl4es() {
+    // only init 1 time
+    static int inited = 0;
+    if(inited) return;
+    inited = 1;
     // default init of globals
     memset(&globals4es, 0, sizeof(globals4es));
     globals4es.mergelist = 1;
     globals4es.queries = 1;
+    globals4es.beginend = 1;
     // overides by env. variables
     char *env_nobanner = getenv("LIBGL_NOBANNER");
     if (env_nobanner && strcmp(env_nobanner, "1") == 0)
@@ -77,14 +86,14 @@ void initialize_gl4es() {
     }
     if (env_fb && strcmp(env_fb, "2") == 0) {
             SHUT(LOGD("LIBGL: using framebuffer + fbo\n"));
-            globals4es.usefb = true;
-            globals4es.usefbo = true;
+            globals4es.usefb = 1;
+            globals4es.usefbo = 1;
     }
 #ifndef ANDROID
     if (env_fb && strcmp(env_fb, "3") == 0) {
             SHUT(LOGD("LIBGL: using pbuffer\n"));
             globals4es.usefb = 1;
-            globals4es.usepbuffer = true;
+            globals4es.usepbuffer = 1;
     }
 #endif
     env(LIBGL_FPS, globals4es.showfps, "fps counter enabled");
@@ -213,6 +222,7 @@ void initialize_gl4es() {
     env(LIBGL_BLENDCOLOR, globals4es.blendcolor, "Export a (faked) glBlendColor");
     env(LIBGL_NOERROR, globals4es.noerror, "glGetError() always return GL_NOERROR");
     env(LIBGL_SILENTSTUB, globals4es.silentstub, "Stub/non present functions are not printed");
+    env(LIBGL_VABGRA, globals4es.vabgra, "Export GL_ARB_vertex_array_bgra extension");
     
     char *env_version = getenv("LIBGL_VERSION");
     if (env_version) {
@@ -249,7 +259,32 @@ void initialize_gl4es() {
         globals4es.queries = 0;
         SHUT(LOGD("LIBGL: Dont't expose fake glQueries functions\n"));
     }
-     
+    char *env_nodownsampling = getenv("LIBGL_NODOWNSAMPLING");
+    if (env_nodownsampling && strcmp(env_nodownsampling, "1") == 0) {
+        globals4es.nodownsampling = 1;
+        SHUT(LOGD("LIBGL: No downsampling of DXTc textures\n"));
+    }
+
+    env(LIBGL_NOTEXMAT, globals4es.texmat, "Don't handle Texture Matrice internaly");
+    env(LIBGL_NOVAOCACHE, globals4es.novaocache, "Don't use VAO cache");
+    
+    char *env_beginend = getenv("LIBGL_BEGINEND");
+    if(env_beginend) {
+        if (strcmp(env_beginend, "0") == 0) {
+                globals4es.beginend = 0;
+                SHUT(LOGD("LIBGL: Don't try to merge subsequent glBegin/glEnd blocks\n"));
+        } 
+        if (strcmp(env_beginend, "1") == 0) {
+                globals4es.beginend = 1;
+                SHUT(LOGD("LIBGL: Try to merge subsequent glBegin/glEnd blocks, even if there is a glColor / glNormal in between\n"));
+        } 
+        if (strcmp(env_beginend, "2") == 0) {
+                globals4es.beginend = 2;
+                SHUT(LOGD("LIBGL: Try hard to merge subsequent glBegin/glEnd blocks, even if there is a glColor / glNormal or Matrix operations in between\n"));
+        } 
+    }
+    env(LIBGL_AVOID16BITS, globals4es.avoid16bits, "Avoid 16bits textures");
+
     char cwd[1024];
     if (getcwd(cwd, sizeof(cwd))!= NULL)
         SHUT(LOGD("LIBGL: Current folder is:%s\n", cwd));

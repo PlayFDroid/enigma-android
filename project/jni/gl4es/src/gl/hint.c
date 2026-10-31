@@ -3,7 +3,10 @@
 #include "init.h"
 
 void gl4es_glHint(GLenum pname, GLenum mode) {
-    if(glstate->gl_batch) flush();
+    
+    if (glstate->gl_batch || glstate->list.pending)
+        flush();
+
     LOAD_GLES(glHint);
     noerrorShim();
     switch(pname) {
@@ -66,6 +69,29 @@ void gl4es_glHint(GLenum pname, GLenum mode) {
         case GL_NOERROR_HINT_GL4ES: 
             if (mode<=1)
                 globals4es.noerror = mode;
+            else
+                errorShim(GL_INVALID_ENUM); 
+            break;
+        case GL_NODOWNSAMPLING_HINT_GL4ES:
+            if (mode<=1)
+                globals4es.nodownsampling = mode;
+            else
+                errorShim(GL_INVALID_ENUM); 
+            break;
+        case GL_NOVAOCACHE_HINT_GL4ES:
+            if (mode<=1)
+                globals4es.novaocache = mode;
+            else
+                errorShim(GL_INVALID_ENUM); 
+            break;
+        case GL_BEGINEND_HINT_GL4ES:
+            if(mode<=2)
+                globals4es.beginend = mode;
+            else
+                errorShim(GL_INVALID_ENUM); 
+        case GL_AVOID16BITS_HINT_GL4ES:
+            if (mode<=1)
+                globals4es.avoid16bits = mode;
             else
                 errorShim(GL_INVALID_ENUM); 
             break;

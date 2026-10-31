@@ -7,6 +7,8 @@
 #include "texture.h"
 #include "buffers.h"
 #include "queries.h"
+#include "light.h"
+#include "fog.h"
 
 typedef struct _glstack_t glstack_t;
 typedef struct _glclientstack_t glclientstack_t;
@@ -20,12 +22,9 @@ typedef struct {
               texgen_s[MAX_TEX],
               texgen_t[MAX_TEX],
               texgen_r[MAX_TEX],
-              texgen_q[MAX_TEX],
-              texture_2d[MAX_TEX],
-              texture_3d[MAX_TEX],
-              texture_1d[MAX_TEX];
+              texgen_q[MAX_TEX];
+    GLuint    texture[MAX_TEX]; // flag
 } enable_state_t;
-
 
 typedef struct {
     GLenum S;
@@ -53,10 +52,10 @@ typedef struct {
            pack_skip_pixels,
            pack_skip_rows,
            pack_image_height;
+    GLuint  pack_align,
+            unpack_align;            
     GLboolean pack_lsb_first;
-    // TODO: do we only need to worry about GL_TEXTURE_2D?
-    GLboolean rect_arb[MAX_TEX];
-    gltexture_t *bound[MAX_TEX];
+    gltexture_t *bound[MAX_TEX][ENABLED_TEXTURE_LAST];
     GLboolean pscoordreplace[MAX_TEX];
     khash_t(tex) *list;
     GLuint active;	// active texture
@@ -66,6 +65,8 @@ typedef struct {
 typedef struct {
     renderlist_t *active;
     GLboolean compiling;
+    GLboolean pending;
+    GLboolean begin;
     GLboolean locked;
     GLuint base;
     GLuint name;
@@ -160,7 +161,7 @@ typedef struct {
     enable_state_t enable;
     map_state_t *map_grid;
     map_states_t map1, map2;
-    renderlist_t **lists;
+    khash_t(gllisthead) *headlists;
     texgen_state_t texgen[MAX_TEX];
     texture_state_t texture;
     GLfloat color[4];
@@ -194,6 +195,10 @@ typedef struct {
     int emulatedPixmap;
     int emulatedWin;
     int shared_cnt;
+    light_state_t light;
+    fog_t fog;
+    material_state_t material;
+    int immediateMV;
 } glstate_t;
 
 #endif

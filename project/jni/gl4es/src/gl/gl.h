@@ -190,11 +190,14 @@ packed_call_t* glCopyPackedCall(const packed_call_t *packed);
     }
 	
 #define PUSH_IF_COMPILING_EXT(nam, ...)             \
-    if ((glstate->list.compiling || glstate->gl_batch) && glstate->list.active) { \
-		NewStage(glstate->list.active, STAGE_GLCALL);   \
-        push_##nam(__VA_ARGS__);                    \
-        noerrorShim();								\
-        return (nam##_RETURN)0;                     \
+    if (glstate->list.active) {                     \
+        if (!glstate->list.pending) { \
+            NewStage(glstate->list.active, STAGE_GLCALL);   \
+            push_##nam(__VA_ARGS__);                \
+            noerrorShim();							\
+            return (nam##_RETURN)0;                 \
+        }                                           \
+        else if(glstate->list.pending) flush();     \
     }
 
 //printf("list:%i, " #nam "\n", state.list.name);
@@ -202,6 +205,8 @@ packed_call_t* glCopyPackedCall(const packed_call_t *packed);
 const char* PrintEnum(GLenum what);
 
 #define PUSH_IF_COMPILING(name) PUSH_IF_COMPILING_EXT(name, name##_ARG_NAMES)
+
+#define ERROR_IN_BEGIN if(glstate->list.begin) {errorShim(GL_INVALID_OPERATION); return;}
 
 static const GLsizei gl_sizeof(GLenum type) {
     // types
@@ -364,6 +369,7 @@ static inline const GLboolean valid_vertex_type(GLenum type) {
 #include "texture.h"
 #include "array.h"
 #include "framebuffers.h"
+#include "blend.h"
 
 const GLubyte *gl4es_glGetString(GLenum name);
 void gl4es_glGetIntegerv(GLenum pname, GLint *params);
@@ -402,16 +408,14 @@ GLenum gl4es_glGetError();
 
 void gl4es_glPointParameteri(GLenum pname, GLint param);
 void gl4es_glPointParameteriv(GLenum pname, const GLint * params);
+void gl4es_glPointParameterf(GLenum pname, GLfloat param);
+void gl4es_glPointParameterfv(GLenum pname, const GLfloat * params);
 
 
 void gl4es_glSecondaryColorPointer(GLint size, GLenum type, GLsizei stride, const GLvoid *pointer);
 void gl4es_glIndexPointer(GLenum type, GLsizei stride, const GLvoid * pointer);
 void gl4es_glEdgeFlagPointer(GLsizei stride, const GLvoid * pointer);
 void gl4es_glGetPointerv(GLenum pname, GLvoid* *params);
-void gl4es_glBlendColor(GLclampf red, GLclampf green, GLclampf blue, GLclampf alpha);
-void gl4es_glBlendFuncSeparate(GLenum sfactorRGB, GLenum dfactorRGB, GLenum sfactorAlpha, GLenum dfactorAlpha);
-void gl4es_glBlendEquationSeparate(GLenum modeRGB, GLenum modeA);
-void gl4es_glBlendFunc(GLenum sfactor, GLenum dfactor);
 void gl4es_glFlush();
 void gl4es_glFinish();
 void gl4es_glFogfv(GLenum pname, const GLfloat* params);

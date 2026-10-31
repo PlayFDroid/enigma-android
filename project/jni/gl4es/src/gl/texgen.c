@@ -1,4 +1,7 @@
 #include "texgen.h"
+#include "init.h"
+#include "matrix.h"
+#include "../glx/hardext.h"
 
 //extern void* eglGetProcAddress(const char*);
 
@@ -20,12 +23,14 @@ void gl4es_glTexGenfv(GLenum coord, GLenum pname, const GLfloat *param) {
     */
 
     //printf("glTexGenf(%s, %s, %s/%f), texture=%i\n", PrintEnum(coord), PrintEnum(pname), PrintEnum(param[0]), param[0], glstate->texture.active);
-    if ((glstate->list.compiling || glstate->gl_batch) && glstate->list.active) {
-		NewStage(glstate->list.active, STAGE_TEXGEN);
-		rlTexGenfv(glstate->list.active, coord, pname, param);
-        noerrorShim();
-		return;
-	}
+    ERROR_IN_BEGIN
+    if (glstate->list.active)
+        if (glstate->list.compiling || glstate->gl_batch) {
+            NewStage(glstate->list.active, STAGE_TEXGEN);
+            rlTexGenfv(glstate->list.active, coord, pname, param);
+            noerrorShim();
+            return;
+        } else flush();
 
     // pname is in: GL_TEXTURE_GEN_MODE, GL_OBJECT_PLANE, GL_EYE_PLANE
     noerrorShim();
@@ -81,7 +86,8 @@ void gl4es_glTexGenfv(GLenum coord, GLenum pname, const GLfloat *param) {
     }
 }
 void gl4es_glGetTexGenfv(GLenum coord,GLenum pname,GLfloat *params) {
-    if (glstate->gl_batch) flush();
+    if (glstate->gl_batch || glstate->list.pending)
+        flush();
     noerrorShim();
 	switch(pname) {
 		case GL_TEXTURE_GEN_MODE:
@@ -161,12 +167,12 @@ void sphere_loop(const GLfloat *verts, const GLfloat *norm, GLfloat *out, GLint 
         matrix_vector(ModelviewMatrix, verts+k*4, eye);
         vector4_normalize(eye);
         vector3_matrix((norm)?(norm+k*3):glstate->normal, InvModelview, eye_norm);
-        vector4_normalize(eye_norm);
-        a=dot4(eye, eye_norm)*2.0f;
-        for (int j=0; j<4; j++)
+        vector_normalize(eye_norm);
+        a=dot(eye, eye_norm)*2.0f;
+        for (int j=0; j<3; j++)
             reflect[j]=eye[j]-eye_norm[j]*a;
         reflect[2]+=1.0f;
-        a = 0.5f / sqrtf(dot4(reflect, reflect));
+        a = 0.5f / sqrtf(dot(reflect, reflect));
         out[k*4+0] = reflect[0]*a + 0.5f;
         out[k*4+1] = reflect[1]*a + 0.5f;
         out[k*4+2] = 0.0f;
@@ -221,7 +227,26 @@ void eye_loop(const GLfloat *verts, const GLfloat *param, GLfloat *out, GLint co
         matrix_vector(ModelviewMatrix, verts+k*4, tmp);
         out[k*4]=dot4(plane, tmp);
     }
+}
 
+void eye_loop_dual(const GLfloat *verts, const GLfloat *param1, const GLfloat* param2, GLfloat *out, GLint count, GLushort *indices) {
+    // based on https://www.opengl.org/wiki/Mathematics_of_glTexGen
+    // First get the ModelviewMatrix
+    GLfloat ModelviewMatrix[16], InvModelview[16];
+    glGetFloatv(GL_MODELVIEW_MATRIX, InvModelview);
+    // column major -> row major
+    matrix_transpose(InvModelview, ModelviewMatrix);
+    // And get the inverse
+    matrix_inverse(ModelviewMatrix, InvModelview);
+    GLfloat plane1[4], plane2[4], tmp[4];
+    vector_matrix(param1, InvModelview, plane1);
+    vector_matrix(param2, InvModelview, plane2);
+    for (int i=0; i<count; i++) {
+	GLushort k = indices?indices[i]:i;
+        matrix_vector(ModelviewMatrix, verts+k*4, tmp);
+        out[k*4+0]=dot4(plane1, tmp);
+        out[k*4+1]=dot4(plane2, tmp);
+    }
 }
 
 static inline void tex_coord_loop(GLfloat *verts, GLfloat *norm, GLfloat *out, GLint count, GLenum type, GLfloat *param_o, GLfloat *param_e, GLushort *indices) {
@@ -259,7 +284,7 @@ void gen_tex_coords(GLfloat *verts, GLfloat *norm, GLfloat **coords, GLint count
     // special case: SPHERE_MAP needs both texgen to make sense
     if ((glstate->enable.texgen_s[texture] && (glstate->texgen[texture].S==GL_SPHERE_MAP)) && (glstate->enable.texgen_t[texture] && (glstate->texgen[texture].T==GL_SPHERE_MAP)))
     {
-        if (!glstate->enable.texture_2d[texture])
+        if (!IS_TEX2D(glstate->enable.texture[texture]))
             return;
         if ((*coords)==NULL) 
             *coords = (GLfloat *)malloc(count * 4 * sizeof(GLfloat));
@@ -271,11 +296,35 @@ void gen_tex_coords(GLfloat *verts, GLfloat *norm, GLfloat **coords, GLint count
      && (glstate->enable.texgen_t[texture] && (glstate->texgen[texture].T==GL_REFLECTION_MAP))
      && (glstate->enable.texgen_r[texture] && (glstate->texgen[texture].R==GL_REFLECTION_MAP)))
     {
-        if (!glstate->enable.texture_2d[texture])
-            return;
-        if ((*coords)==NULL) 
-            *coords = (GLfloat *)malloc(count * 4 * sizeof(GLfloat));
-        reflection_loop(verts, norm, *coords, (indices)?ilen:count, indices);
+        if(hardext.cubemap) {
+            *needclean=1;
+            // setup reflection map!
+            GLuint old_tex=glstate->texture.active;
+            if (old_tex!=texture) gl4es_glActiveTexture(GL_TEXTURE0 + texture);
+            LOAD_GLES_OES(glTexGeni);
+            LOAD_GLES_OES(glTexGenfv);
+            LOAD_GLES(glEnable);
+            // setup cube map mode
+            gles_glTexGeni(GL_TEXTURE_GEN_STR, GL_TEXTURE_GEN_MODE, GL_REFLECTION_MAP);
+            // enable texgen
+            gles_glEnable(GL_TEXTURE_GEN_STR);
+            // check Texture Matrix
+            if (!(globals4es.texmat || glstate->texture_matrix[texture]->identity)) {
+                LOAD_GLES(glLoadMatrixf);
+                GLenum old_mat = glstate->matrix_mode;
+                if(old_mat!=GL_TEXTURE) gl4es_glMatrixMode(GL_TEXTURE);
+                gles_glLoadMatrixf(getTexMat(texture));
+                if(old_mat!=GL_TEXTURE) gl4es_glMatrixMode(old_mat);
+            }
+
+            if (old_tex!=texture) gl4es_glActiveTexture(GL_TEXTURE0 + old_tex);
+        } else {
+            if (!IS_TEX2D(glstate->enable.texture[texture]))
+                return;
+            if ((*coords)==NULL) 
+                *coords = (GLfloat *)malloc(count * 4 * sizeof(GLfloat));
+            reflection_loop(verts, norm, *coords, (indices)?ilen:count, indices);
+        }
         return;
     }
     // special case: NORMAL_MAP  needs the 3 texgen to make sense
@@ -284,31 +333,43 @@ void gen_tex_coords(GLfloat *verts, GLfloat *norm, GLfloat **coords, GLint count
      && (glstate->enable.texgen_r[texture] && (glstate->texgen[texture].R==GL_NORMAL_MAP)))
     {
         *needclean=1;
-        // setup reflection map!
+        // setup normal map!
         GLuint old_tex=glstate->texture.active;
         if (old_tex!=texture) gl4es_glActiveTexture(GL_TEXTURE0 + texture);
         LOAD_GLES_OES(glTexGeni);
         LOAD_GLES_OES(glTexGenfv);
         LOAD_GLES(glEnable);
         // setup cube map mode
-        gles_glTexGeni(GL_S, GL_TEXTURE_GEN_MODE, GL_NORMAL_MAP);
-        gles_glTexGeni(GL_T, GL_TEXTURE_GEN_MODE, GL_NORMAL_MAP);
-        gles_glTexGeni(GL_R, GL_TEXTURE_GEN_MODE, GL_NORMAL_MAP);
+        gles_glTexGeni(GL_TEXTURE_GEN_STR, GL_TEXTURE_GEN_MODE, GL_NORMAL_MAP);
         // enable texgen
         gles_glEnable(GL_TEXTURE_GEN_STR);
+        // check Texture Matrix
+        if (!(globals4es.texmat || glstate->texture_matrix[texture]->identity)) {
+            LOAD_GLES(glLoadMatrixf);
+            GLenum old_mat = glstate->matrix_mode;
+            if(old_mat!=GL_TEXTURE) gl4es_glMatrixMode(GL_TEXTURE);
+            gles_glLoadMatrixf(getTexMat(texture));
+            if(old_mat!=GL_TEXTURE) gl4es_glMatrixMode(old_mat);
+        }
 
         if (old_tex!=texture) gl4es_glActiveTexture(GL_TEXTURE0 + old_tex);
             
         return;
     }
-    if (!glstate->enable.texture_2d[texture])
+    if (!IS_ANYTEX(glstate->enable.texture[texture]))
 	return;
     if ((*coords)==NULL) 
         *coords = (GLfloat *)malloc(count * 4 * sizeof(GLfloat));
-    if (glstate->enable.texgen_s[texture])
-        tex_coord_loop(verts, norm, (*coords), (indices)?ilen:count, glstate->texgen[texture].S, glstate->texgen[texture].S_O, glstate->texgen[texture].S_E, indices);
-    if (glstate->enable.texgen_t[texture])
-        tex_coord_loop(verts, norm, (*coords)+1, (indices)?ilen:count, glstate->texgen[texture].T, glstate->texgen[texture].T_O, glstate->texgen[texture].T_E, indices);
+    if (    (glstate->enable.texgen_s[texture] && glstate->texgen[texture].S==GL_EYE_LINEAR) 
+        &&  (glstate->enable.texgen_t[texture] && glstate->texgen[texture].T==GL_EYE_LINEAR) )
+    {
+        eye_loop_dual(verts, glstate->texgen[texture].S_E, glstate->texgen[texture].T_E, (*coords), (indices)?ilen:count, indices);
+    } else {
+        if (glstate->enable.texgen_s[texture])
+            tex_coord_loop(verts, norm, (*coords), (indices)?ilen:count, glstate->texgen[texture].S, glstate->texgen[texture].S_O, glstate->texgen[texture].S_E, indices);
+        if (glstate->enable.texgen_t[texture])
+            tex_coord_loop(verts, norm, (*coords)+1, (indices)?ilen:count, glstate->texgen[texture].T, glstate->texgen[texture].T_O, glstate->texgen[texture].T_E, indices);
+    }
     if (glstate->enable.texgen_r[texture])
         tex_coord_loop(verts, norm, (*coords)+2, (indices)?ilen:count, glstate->texgen[texture].R, glstate->texgen[texture].R_O, glstate->texgen[texture].R_E, indices);
     else
@@ -332,6 +393,14 @@ void gen_tex_clean(GLint cleancode, int texture) {
 		GLuint old_tex=glstate->texture.active;
 		LOAD_GLES(glDisable);
 		gles_glDisable(GL_TEXTURE_GEN_STR);
+        // check Texture Matrix
+        if (!(globals4es.texmat || glstate->texture_matrix[texture]->identity)) {
+            LOAD_GLES(glLoadIdentity);
+            GLenum old_mat = glstate->matrix_mode;
+            if(old_mat!=GL_TEXTURE) gl4es_glMatrixMode(GL_TEXTURE);
+            gles_glLoadIdentity();
+            if(old_mat!=GL_TEXTURE) gl4es_glMatrixMode(old_mat);
+        }
 		return;
 	}
 }

@@ -13,7 +13,7 @@ freely, subject to the following restrictions:
 1. The origin of this software must not be misrepresented; you must not
    claim that you wrote the original software. If you use this software
    in a product, an acknowledgment in the product documentation would be
-   appreciated but is not required. 
+   appreciated but is not required.
 2. Altered source versions must be plainly marked as such, and must not be
    misrepresented as being the original software.
 3. This notice may not be removed or altered from any source distribution.
@@ -49,6 +49,8 @@ If you compile this code with SDL 1.3 or newer, or use in some other way, the li
 #include "unicodestuff.h"
 #include "atan2i.h"
 
+extern int SDL_PrivateKeyboardWithDeviceId(Uint8 state, SDL_keysym *keysym, int deviceId);
+
 #ifndef SDL_COMPATIBILITY_HACKS_SLOW_COMPATIBLE_EVENT_QUEUE
 
 #if SDL_VERSION_ATLEAST(1,3,0)
@@ -61,6 +63,7 @@ extern SDL_Window * ANDROID_CurrentWindow;
 #define SDL_SendMouseMotion(A,B,X,Y) SDL_PrivateMouseMotion(0, 0, X, Y)
 #define SDL_SendMouseButton(N, A, B) SDL_PrivateMouseButton( A, B, 0, 0 )
 #define SDL_SendKeyboardKey(state, keysym) SDL_PrivateKeyboard(state, keysym)
+#define SDL_SendKeyboardKeyWithDeviceId(state, keysym, deviceId) SDL_PrivateKeyboardWithDeviceId(state, keysym, deviceId)
 
 #endif
 
@@ -78,7 +81,7 @@ extern void SDL_ANDROID_MainThreadPushMouseMotion(int x, int y)
 {
 	SDL_ANDROID_currentMouseX = x;
 	SDL_ANDROID_currentMouseY = y;
-
+	//__android_log_print(ANDROID_LOG_INFO, "libSDL", "MainThreadPushMouseMotion: %4d %4d", x, y);
 	SDL_SendMouseMotion( ANDROID_CurrentWindow, 0, x, y );
 }
 
@@ -96,7 +99,7 @@ extern void SDL_ANDROID_MainThreadPushMouseButton(int pressed, int button)
 		SDL_ANDROID_currentMouseButtons &= ~(SDL_BUTTON(button));
 }
 
-extern void SDL_ANDROID_MainThreadPushKeyboardKey(int pressed, SDL_scancode key, int unicode)
+extern void SDL_ANDROID_MainThreadPushKeyboardKey(int pressed, SDL_scancode key, int unicode, int deviceId)
 {
 	SDL_keysym keysym;
 
@@ -201,12 +204,12 @@ extern void SDL_ANDROID_MainThreadPushKeyboardKey(int pressed, SDL_scancode key,
 
 	if( pressed == SDL_RELEASED )
 		keysym.unicode = 0;
-	else if( keysym.sym < 0x80 )
+	else if( keysym.sym < 0x80 && keysym.unicode == 0 )
 		keysym.unicode = keysym.sym;
 
 	//__android_log_print(ANDROID_LOG_INFO, "libSDL","SDL_SendKeyboardKey sym %d scancode %d unicode %d", keysym.sym, keysym.scancode, keysym.unicode);
 
-	SDL_SendKeyboardKey( pressed, &keysym );
+	SDL_SendKeyboardKeyWithDeviceId( pressed, &keysym, deviceId );
 }
 
 extern void SDL_ANDROID_MainThreadPushJoystickAxis(int joy, int axis, int value)
@@ -284,7 +287,7 @@ void SDL_ANDROID_DeferredTextInput()
 		deferredTextMutex = SDL_CreateMutex();
 
 	SDL_mutexP(deferredTextMutex);
-	
+
 	if( deferredTextIdx1 != deferredTextIdx2 )
 	{
 		SDL_keysym keysym;
@@ -292,7 +295,7 @@ void SDL_ANDROID_DeferredTextInput()
 		deferredTextIdx1++;
 		if( deferredTextIdx1 >= DEFERRED_TEXT_COUNT )
 			deferredTextIdx1 = 0;
-		
+
 		keysym = asciiToKeysym( deferredText[deferredTextIdx1].scancode, deferredText[deferredTextIdx1].unicode );
 		if( deferredText[deferredTextIdx1].down == SDL_RELEASED )
 			keysym.unicode = 0;
@@ -306,11 +309,10 @@ void SDL_ANDROID_DeferredTextInput()
 	{
 		if( SDL_ANDROID_TextInputFinished )
 		{
-			SDL_ANDROID_TextInputFinished = 0;
 			SDL_ANDROID_IsScreenKeyboardShownFlag = 0;
 		}
 	}
-	
+
 	SDL_mutexV(deferredTextMutex);
 }
 

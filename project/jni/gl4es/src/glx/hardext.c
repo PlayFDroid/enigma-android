@@ -110,6 +110,14 @@ void GetHardwareExtensions(int notest)
     S("GL_OES_blend_equation_separate", blendeq, 1);
     S("GL_EXT_blend_minmax", blendminmax, 1);
     S("GL_EXT_blend_color", blendcolor, 1);
+    if(hardext.blendcolor==0) {
+        // try by just loading the function
+        LOAD_GLES_OR_OES(glBlendColor);
+        if(gles_glBlendColor != NULL) {
+            hardext.blendcolor = 1;
+	    SHUT(LOGD("LIBGL: Extension glBlendColor found and used\n"));
+	}
+    }
     S("GL_OES_point_sprite", pointsprite, 1); 
     S("GL_OES_point_size_array", pointsize, 0);
     S("GL_OES_element_index_uint", elementuint, 0);
@@ -118,8 +126,9 @@ void GetHardwareExtensions(int notest)
     S("GL_OES_depth24", depth24, 1);
     S("GL_OES_rgb8_rgba8", rgba8, 1);
     S("GL_EXT_multi_draw_arrays", multidraw, 1);
-    S("GL_EXT_texture_format_BGRA8888", bgra8888, 0);
+    S("GL_EXT_texture_format_BGRA8888", bgra8888, 1);
     S("GL_OES_depth_texture", depthtex, 1);
+    S("GL_OES_texture_cube_map", cubemap, 1);
 
     // Now get some max stuffs
     gles_glGetIntegerv(GL_MAX_TEXTURE_SIZE, &hardext.maxsize);
@@ -127,6 +136,7 @@ void GetHardwareExtensions(int notest)
     gles_glGetIntegerv(GL_MAX_TEXTURE_UNITS, &hardext.maxtex);
     gles_glGetIntegerv(GL_MAX_LIGHTS, &hardext.maxlights);
     if(hardext.maxtex>MAX_TEX) hardext.maxtex=MAX_TEX;      // caping, as there are some fixed-sized array...
+    if(hardext.maxlights>MAX_LIGHT) hardext.maxlights=MAX_LIGHT;                // caping lights too
     SHUT(LOGD("LIBGL: Texture Units: %d, Max lights: %d\n", hardext.maxtex, hardext.maxlights));
 #ifndef PANDORA
 // The IMPLEMENTATION_COLOR_READ is pretty buggy on the Pandora, so disabling it (it's just use to blit PBuffer to Drawable in glx.c)
@@ -136,7 +146,7 @@ void GetHardwareExtensions(int notest)
 #endif
 
     if(strstr(egl_eglQueryString(eglDisplay, EGL_EXTENSIONS), "EGL_KHR_gl_colorspace")) {
-        LOGD("LIBGL: sRGB surface supported\n");
+        SHUT(LOGD("LIBGL: sRGB surface supported\n"));
         hardext.srgb = 1;
     }
 

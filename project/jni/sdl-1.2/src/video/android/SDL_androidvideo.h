@@ -36,8 +36,6 @@ If you compile this code with SDL 1.3 or newer, or use in some other way, the li
 
 //#define VIDEO_DEBUG 1
 
-enum ScreenZoom { ZOOM_NONE = 0, ZOOM_MAGNIFIER = 1 };
-
 extern int SDL_ANDROID_sWindowWidth;
 extern int SDL_ANDROID_sWindowHeight;
 extern int SDL_ANDROID_sRealWindowWidth;
@@ -63,14 +61,24 @@ extern int SDL_ANDROID_TextInputFinished;
 extern SDL_Surface *SDL_CurrentVideoSurface;
 extern SDL_Rect SDL_ANDROID_ForceClearScreenRect[];
 extern int SDL_ANDROID_ForceClearScreenRectAmount;
+
+// Small zoom window near the finger
+enum ScreenZoom { ZOOM_NONE = 0, ZOOM_MAGNIFIER = 1 };
 extern int SDL_ANDROID_ShowScreenUnderFinger;
 extern SDL_Rect SDL_ANDROID_ShowScreenUnderFingerRect, SDL_ANDROID_ShowScreenUnderFingerRectSrc;
+
+// Full-screen zoom centered on mouse cursor
+extern float SDL_ANDROID_PinchZoomRatio;
+static const float SDL_ANDROID_PinchZoomRatioLimit = 1/20.0f;
+static const float SDL_ANDROID_PinchZoomSpeed = 1.5f;
+
 extern int SDL_ANDROID_CallJavaSwapBuffers();
 extern void SDL_ANDROID_CallJavaShowScreenKeyboard(const char * oldText, char * outBuf, int outBufLen, int async);
 extern void SDL_ANDROID_CallJavaHideScreenKeyboard();
 extern void SDL_ANDROID_CallJavaSetScreenKeyboardHintMessage(const char *hint);
 extern int SDL_ANDROID_IsScreenKeyboardShown();
 extern int SDL_ANDROID_IsScreenKeyboardShownFlag;
+extern int SDL_ANDROID_AsyncTextInputActive;
 extern int SDL_ANDROID_drawTouchscreenKeyboard();
 extern void SDL_ANDROID_VideoContextLost();
 extern void SDL_ANDROID_VideoContextRecreated();
@@ -80,6 +88,7 @@ extern void SDL_ANDROID_initFakeStdout();
 extern SDL_VideoDevice *ANDROID_CreateDevice_1_3(int devindex);
 extern void SDL_ANDROID_ProcessDeferredEvents();
 extern void SDL_ANDROID_WarpMouse(int x, int y);
+extern void SDL_ANDROID_SetCapturedMousePosition(int x, int y);
 extern void SDL_ANDROID_DrawMouseCursor(int x, int y, int size, float alpha);
 extern void SDL_ANDROID_DrawMouseCursorIfNeeded();
 extern void SDL_ANDROID_CallJavaTogglePlainAndroidSoftKeyboardInput();

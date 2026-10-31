@@ -19,4 +19,16 @@
 /project/res/drawable/banner.png
 /project/res/drawable-xhdpi/ouya_icon.png
 *.swp
-sign.sh
+
+# Gradle & Build artifacts
+.gradle/
+build/
+**/build/
+*.apk
+*.aab
+*.jks
+*.keystore
+.cxx/
+.idea/
+*.o
+*.a

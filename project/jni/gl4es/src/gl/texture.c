@@ -25,6 +25,12 @@ int npot(int n) {
     return i;
 }
 
+static int inline nlevel(int size, int level) {
+    size>>=level;
+    if(!size) size=1;
+    return size;
+}
+
 // conversions for GL_ARB_texture_rectangle
 void tex_coord_rect_arb(GLfloat *tex, GLsizei len,
                         GLsizei width, GLsizei height) {
@@ -71,20 +77,20 @@ void tex_coord_matrix(GLfloat *tex, GLsizei len, const GLfloat* mat) {
  * Apply texture matrix if not identity 
  * Or some NPOT texture used
  */
-void tex_setup_texcoord(GLuint len) {
+void tex_setup_texcoord(GLuint len, GLuint itarget) {
     LOAD_GLES(glTexCoordPointer);
     GLuint texunit = glstate->texture.client;
     
     static void * tex[MAX_TEX] = {0};
     static int texlen[MAX_TEX] = {0};
     
-    gltexture_t *bound = glstate->texture.bound[texunit];
+    gltexture_t *bound = glstate->texture.bound[texunit][itarget];
     
     // check if some changes are needed
     int changes = 0;
-    if ((glstate->texture.rect_arb[texunit]) 
+    if ((itarget == ENABLED_TEXTURE_RECTANGLE) 
         || (bound && ((bound->width!=bound->nwidth)||(bound->height!=bound->nheight)
-        )) || !glstate->texture_matrix[texunit]->identity 
+        )) || !(globals4es.texmat || glstate->texture_matrix[texunit]->identity) 
         )
         changes = 1;
     if (changes) {
@@ -96,10 +102,10 @@ void tex_setup_texcoord(GLuint len) {
         }
         copy_gl_pointer_tex_noalloc(tex[texunit], &glstate->vao->pointers.tex_coord[texunit], 4, 0, len);
         // Normalize if needed
-        if ((glstate->texture.rect_arb[texunit]))
+        if (itarget == ENABLED_TEXTURE_RECTANGLE)
             tex_coord_rect_arb(tex[texunit], len, bound->width, bound->height);
         // Apply transformation matrix if any
-        if (!glstate->texture_matrix[texunit]->identity)
+        if (!(globals4es.texmat || glstate->texture_matrix[texunit]->identity))
             tex_coord_matrix(tex[texunit], len, getTexMat(texunit));
         // NPOT adjust
         if (bound && ((bound->width!=bound->nwidth) || (bound->height!=bound->nheight)))
@@ -159,6 +165,10 @@ void internal2format_type(GLenum internalformat, GLenum *format, GLenum *type)
             break;
         case GL_RGBA:
             *format = GL_RGBA;
+            *type = GL_UNSIGNED_BYTE;
+            break;
+        case GL_BGRA:
+            *format = GL_BGRA;
             *type = GL_UNSIGNED_BYTE;
             break;
         case GL_DEPTH_COMPONENT:
@@ -223,6 +233,12 @@ static void *swizzle_texture(GLsizei width, GLsizei height,
             dest_format = GL_RGBA;
             *format = GL_RGBA;
             break;
+        case GL_BGRA:
+            if(hardext.bgra8888 && ((*type)==GL_UNSIGNED_BYTE)) {
+                dest_format = GL_BGRA;
+                *format = GL_BGRA;
+            } else convert = true;
+            break;
         default:
             convert = true;
             break;
@@ -284,7 +300,7 @@ static void *swizzle_texture(GLsizei width, GLsizei height,
 		if (convert) {
 			GLvoid *pixels = (GLvoid *)data;
 			if (! pixel_convert(data, &pixels, width, height,
-								*format, *type, dest_format, dest_type, 0)) {
+								*format, *type, dest_format, dest_type, 0, glstate->texture.unpack_align)) {
 				printf("LIBGL: swizzle error: (%s, %s -> %s, %s)\n",
 					PrintEnum(*format), PrintEnum(*type), PrintEnum(dest_format), PrintEnum(dest_type));
 				return NULL;
@@ -295,7 +311,7 @@ static void *swizzle_texture(GLsizei width, GLsizei height,
                 GLvoid *pix2 = (GLvoid *)pixels;
                 internal2format_type(internalformat, &dest_format, &dest_type);
                 if (! pixel_convert(pixels, &pix2, width, height,
-                                    *format, *type, dest_format, dest_type, 0)) {
+                                    *format, *type, dest_format, dest_type, 0, glstate->texture.unpack_align)) {
                     printf("LIBGL: swizzle error: (%s, %s -> %s, %s)\n",
                         PrintEnum(dest_format), PrintEnum(dest_type), PrintEnum(internalformat), PrintEnum(dest_type));
                     return NULL;
@@ -330,7 +346,7 @@ static void *swizzle_texture(GLsizei width, GLsizei height,
     return (void *)data;
 }
 
-GLenum swizzle_internalformat(GLenum *internalformat) {
+GLenum swizzle_internalformat(GLenum *internalformat, GLenum format, GLenum type) {
     GLenum ret = *internalformat;
     GLenum sret;
     switch(*internalformat) {
@@ -349,8 +365,12 @@ GLenum swizzle_internalformat(GLenum *internalformat) {
         case GL_RGB5:
             sret = GL_RGB5;
             break;
-        case GL_RGB8:
         case GL_RGB:
+             if(globals4es.avoid16bits==0 && format==GL_RGB && type==GL_UNSIGNED_SHORT_5_6_5) {
+                sret = ret = GL_RGB5;
+                break;
+            }
+        case GL_RGB8:
         case GL_BGR:
         case GL_RGB16:
         case GL_RGB16F:
@@ -365,14 +385,25 @@ GLenum swizzle_internalformat(GLenum *internalformat) {
             sret = GL_RGB5_A1;
             break;
         case GL_RGBA:
+            if(globals4es.avoid16bits==0 && format==GL_RGBA && type==GL_UNSIGNED_SHORT_5_5_5_1) {
+                sret = ret = GL_RGB5_A1;
+                break;
+            }
+            if(globals4es.avoid16bits==0 && format==GL_RGBA && type==GL_UNSIGNED_SHORT_4_4_4_4) {
+                sret = ret = GL_RGBA4;
+                break;
+            }
         case GL_RGBA8:
-        case GL_BGRA:
         case GL_RGBA16:
         case GL_RGBA16F:
         case GL_RGBA32F:
         case GL_RGB10_A2:
         case 4: 
-            ret = GL_RGBA; sret = GL_RGBA; 
+            if(format==GL_BGRA && hardext.bgra8888) {
+                ret = GL_BGRA; sret = GL_BGRA; 
+            } else {
+                ret = GL_RGBA; sret = GL_RGBA; 
+            }
             break;
         case GL_ALPHA8:
         case GL_ALPHA:
@@ -425,6 +456,15 @@ GLenum swizzle_internalformat(GLenum *internalformat) {
             ret = GL_COMPRESSED_RGBA;
             sret = GL_RGBA;
             break;
+        case GL_BGRA:
+            if(hardext.bgra8888) {
+                ret = GL_BGRA;
+                sret = GL_BGRA;
+            } else {
+                ret = GL_RGBA;
+                sret = GL_RGBA;
+            }
+            break;
         default:
             ret = GL_RGBA;
             sret = GL_RGBA;
@@ -434,6 +474,86 @@ GLenum swizzle_internalformat(GLenum *internalformat) {
     *internalformat = ret;
     return sret;
 }
+
+static int get_shrinklevel(int width, int height, int level) {
+    int shrink = 0;
+    int mipwidth = width << level;
+    int mipheight = height << level;
+    switch(globals4es.texshrink) {
+        case 0: // nothing
+            break;
+        case 1: //everything / 2
+            if ((mipwidth > 1) && (mipheight > 1)) {
+                shrink = 1;
+            }
+            break;
+        case 2: //only > 512 /2
+        case 7: //only > 512 /2 , but not for empty texture
+            if (((mipwidth%2==0) && (mipheight%2==0)) && 
+                ((mipwidth > 512) && (mipheight > 8)) || ((mipheight > 512) && (mipwidth > 8))) {
+                shrink = 1;
+            }
+            break;
+        case 3: //only > 256 /2
+            if (((mipwidth%2==0) && (mipheight%2==0)) && 
+                ((mipwidth > 256) && (mipheight > 8)) || ((mipheight > 256) && (mipwidth > 8))) {
+                shrink = 1;
+            }
+            break;
+        case 4: //only > 256 /2, >=1024 /4
+        case 5: //every > 256 is downscaled to 256, but not for empty texture   (as there is no downscale stronger than 4, there are the same)
+            if (((mipwidth%4==0) && (mipheight%4==0)) && 
+                ((mipwidth > 256) && (mipheight > 8)) || ((mipheight > 256) && (mipwidth > 8))) {
+                if ((mipwidth>=1024) || (mipheight>=1024)) {
+                    shrink = 2;
+                } else {
+                    shrink = 1;
+                }
+            }
+            break;
+        case 6: //only > 128 /2, >=512 is downscaled to 256, but not for empty texture
+            if (((mipwidth%2==0) && (mipheight%2==0)) && 
+                ((mipwidth > 128) && (mipheight > 8)) || ((mipheight > 128) && (mipwidth > 8))) {
+                if (((mipwidth%2==0) && (mipheight%2==0)) && (mipwidth>=512) || (mipheight>=512)) {
+                    while (((mipwidth > 256) && (mipheight > 8)) || ((mipheight > 256) && (mipwidth > 8))) {
+                        width /= 2;
+                        height /= 2;
+                        mipwidth /= 2;
+                        mipheight /= 2;
+                        shrink+=1;
+                    }
+                } else {
+                    shrink = 1;
+                }
+            }
+            break;
+        case 8: //advertise 8192 max texture size, but >2048 are shrinked to 2048
+            if ((mipwidth>4096) || (mipheight>4096)) {
+                shrink=2;
+            } else
+            if ((mipwidth>2048) || (mipheight>2048)) {
+                shrink=1;
+            }
+            break;
+        case 9: //advertise 8192 max texture size, but >4096 are quadshrinked and >512 are shrinked, but not for empty texture
+            if ((mipwidth>4096) || (mipheight>4096)) {
+                shrink=2;
+            } else
+            if ((mipwidth>512) || (mipheight>512)) {
+                shrink=1;
+            }
+            break;
+        case 10://advertise 8192 max texture size, but >2048 are quadshrinked and >512 are shrinked, but not for empty texture
+            if ((mipwidth>2048) || (mipheight>2048)) {
+                shrink=2;
+            } else
+            if ((mipwidth>512) || (mipheight>512)) {
+                shrink=1;
+            }
+            break;
+        }
+    return shrink;
+} 
 
 static int default_tex_mipmap = 0;
 
@@ -445,31 +565,38 @@ void gl4es_glTexImage2D(GLenum target, GLint level, GLint internalformat,
                   GLsizei width, GLsizei height, GLint border,
                   GLenum format, GLenum type, const GLvoid *data) {
 
-    //printf("glTexImage2D on target=%s with unpack_row_length(%i), size(%i,%i) and skip(%i,%i), format(internal)=%s(%s), type=%s, data=%08x, level=%i (mipmap_need=%i, mipmap_auto=%i) => texture=%u (streamed=%i), glstate->list.compiling=%d\n", PrintEnum(target), glstate->texture.unpack_row_length, width, height, glstate->texture.unpack_skip_pixels, glstate->texture.unpack_skip_rows, PrintEnum(format), PrintEnum(internalformat), PrintEnum(type), data, level, (glstate->texture.bound[glstate->texture.active])?glstate->texture.bound[glstate->texture.active]->mipmap_need:0, (glstate->texture.bound[glstate->texture.active])?glstate->texture.bound[glstate->texture.active]->mipmap_auto:0, (glstate->texture.bound[glstate->texture.active])?glstate->texture.bound[glstate->texture.active]->texture:0, (glstate->texture.bound[glstate->texture.active])?glstate->texture.bound[glstate->texture.active]->streamed:0, glstate->list.compiling);
+    //printf("glTexImage2D on target=%s with unpack_row_length(%i), size(%i,%i) and skip(%i,%i), format(internal)=%s(%s), type=%s, data=%08x, level=%i (mipmap_need=%i, mipmap_auto=%i, base_level=%i, max_level=%i) => texture=%u (streamed=%i), glstate->list.compiling=%d\n", PrintEnum(target), glstate->texture.unpack_row_length, width, height, glstate->texture.unpack_skip_pixels, glstate->texture.unpack_skip_rows, PrintEnum(format), PrintEnum(internalformat), PrintEnum(type), data, level, (glstate->texture.bound[glstate->texture.active][what_target(target)])?glstate->texture.bound[glstate->texture.active][what_target(target)]->mipmap_need:0, (glstate->texture.bound[glstate->texture.active][what_target(target)])?glstate->texture.bound[glstate->texture.active][what_target(target)]->mipmap_auto:0, (glstate->texture.bound[glstate->texture.active][what_target(target)])?glstate->texture.bound[glstate->texture.active][what_target(target)]->base_level:0, (glstate->texture.bound[glstate->texture.active][what_target(target)])?glstate->texture.bound[glstate->texture.active][what_target(target)]->max_level:0, (glstate->texture.bound[glstate->texture.active][what_target(target)])?glstate->texture.bound[glstate->texture.active][what_target(target)]->texture:0, (glstate->texture.bound[glstate->texture.active][what_target(target)])?glstate->texture.bound[glstate->texture.active][what_target(target)]->streamed:0, glstate->list.compiling);
     // proxy case
-    if (target == GL_PROXY_TEXTURE_2D) {
-        proxy_width = ((width<<level)>(globals4es.texshrink>=8)?8192:2048)?0:width;
-        proxy_height = ((height<<level)>(globals4es.texshrink>=8)?8192:2048)?0:height;
-        proxy_intformat = swizzle_internalformat(&internalformat);
+
+    const GLuint itarget = what_target(target);
+    const GLuint rtarget = map_tex_target(target);
+
+    if (rtarget == GL_PROXY_TEXTURE_2D) {
+        int max1=hardext.maxsize;
+        if (globals4es.texshrink>=8 && max1>8192) max1=8192;
+        proxy_width = ((width<<level)>max1)?0:width;
+        proxy_height = ((height<<level)>max1)?0:height;
+        proxy_intformat = swizzle_internalformat(&internalformat, format, type);
         return;
     }
-    //PUSH_IF_COMPILING(glTexImage2D);
     GLuint old_glbatch = glstate->gl_batch;
-    if (glstate->gl_batch) {
+    if (glstate->gl_batch || glstate->list.pending) {
         flush();
         glstate->gl_batch = 0;
+    } else {
+        PUSH_IF_COMPILING(glTexImage2D);
     }
-
+    
     GLvoid *datab = (GLvoid*)data;
     
 	if (glstate->vao->unpack)
-		datab += (uintptr_t)glstate->vao->pack->data;
+		datab += (uintptr_t)glstate->vao->unpack->data;
         
     GLvoid *pixels = (GLvoid *)datab;
     border = 0;	//TODO: something?
     noerrorShim();
 
-    gltexture_t *bound = glstate->texture.bound[glstate->texture.active];
+    gltexture_t *bound = glstate->texture.bound[glstate->texture.active][itarget];
     if (bound) bound->alpha = pixel_hasalpha(format);
     if (globals4es.automipmap) {
         if (bound && (level>0))
@@ -480,11 +607,19 @@ void gl4es_glTexImage2D(GLenum target, GLint level, GLint internalformat,
             else
                 bound->mipmap_need = 1;
      }
-     GLenum new_format = swizzle_internalformat(&internalformat);
+     GLenum new_format = swizzle_internalformat(&internalformat, format, type);
      if (bound && (level==0)) {
          bound->orig_internal = internalformat;
          bound->internalformat = new_format;
      }
+    // shrink checking
+    int mipwidth = width << level;
+    int mipheight = height << level;
+    int shrink = 0;
+    if(bound) {
+        bound->shrink = shrink = get_shrinklevel(width, height, level);
+    }
+    if(width>>shrink==0 && height>>shrink==0) return;   // nothing to do
      if (datab) {
 
         // implements GL_UNPACK_ROW_LENGTH
@@ -509,13 +644,12 @@ void gl4es_glTexImage2D(GLenum target, GLint level, GLint internalformat,
             free(old);
         }
 
-        if (bound) {
-        bound->shrink = 0;
-        switch(globals4es.texshrink) {
-            case 0: // nothing
+        if (bound && bound->shrink!=0) {
+            switch(globals4es.texshrink) {
+            case 0: // nothing ???
                 break;
             case 1: //everything / 2
-                if ((width > 1) && (height > 1)) {
+                if ((mipwidth > 1) && (mipheight > 1)) {
                     GLvoid *out = pixels;
                     GLfloat ratio = 0.5;
                     pixel_scale(pixels, &out, width, height, ratio, format, type);
@@ -527,169 +661,34 @@ void gl4es_glTexImage2D(GLenum target, GLint level, GLint internalformat,
                     bound->shrink = 1;
                 }
                 break;
-            case 2: //only > 512 /2
-            case 7: //only > 512 /2 , but not for empty texture
-                if (((width%2==0) && (height%2==0)) && 
-                    ((width > 512) && (height > 8)) || ((height > 512) && (width > 8))) {
-                    GLvoid *out = pixels;
-                    pixel_halfscale(pixels, &out, width, height, format, type);
-                    if (out != pixels && pixels!=datab)
-                        free(pixels);
-                    pixels = out;
-                    width /= 2;
-                    height /= 2;
-                    bound->shrink = 1;
-                }
-                break;
-            case 3: //only > 256 /2
-                if (((width%2==0) && (height%2==0)) && 
-                    ((width > 256) && (height > 8)) || ((height > 256) && (width > 8))) {
-                    GLvoid *out = pixels;
-                    pixel_halfscale(pixels, &out, width, height, format, type);
-                    if (out != pixels && pixels!=datab)
-                        free(pixels);
-                    pixels = out;
-                    width /= 2;
-                    height /= 2;
-                    bound->shrink = 1;
-                }
-                break;
-            case 4: //only > 256 /2, >=1024 /4
-            case 5: //every > 256 is downscaled to 256, but not for empty texture   (as there is no downscale stronger than 4, there are the same)
-                if (((width%4==0) && (height%4==0)) && 
-                    ((width > 256) && (height > 8)) || ((height > 256) && (width > 8))) {
-                    if ((width>=1024) || (height>=1024)) {
+            default:
+                while(shrink) {
+                    if (shrink>1) { // quarterscale
                         GLvoid *out = pixels;
                         pixel_quarterscale(pixels, &out, width, height, format, type);
                         if (out != pixels && pixels!=datab)
                             free(pixels);
                         pixels = out;
-                        width /= 4;
-                        height /= 4;
-                        bound->shrink = 2;
-                    } else {
+                        width = nlevel(width, 2);
+                        height = nlevel(height, 2);
+                        shrink-=2;
+                    } else {    //halfscale
                         GLvoid *out = pixels;
                         pixel_halfscale(pixels, &out, width, height, format, type);
                         if (out != pixels && pixels!=datab)
                             free(pixels);
                         pixels = out;
-                        width /= 2;
-                        height /= 2;
-                        bound->shrink = 1;
+                        width = nlevel(width, 1);
+                        height = nlevel(height, 1);
+                        shrink--;
                     }
                 }
-                break;
-            /*case 5: //every > 256 is downscaled to 256, but not for empty texture
-                while (((width%2==0) && (height%2==0)) && 
-                    ((width > 256) && (height > 8)) || ((height > 256) && (width > 8))) {
-                    GLvoid *out = pixels;
-                    pixel_halfscale(pixels, &out, width, height, format, type);
-                    if (out != pixels && pixels!=datab)
-                        free(pixels);
-                    pixels = out;
-                    width /= 2;
-                    height /= 2;
-                    bound->shrink+=1;
-                }
-                break;*/
-            case 6: //only > 128 /2, >=512 is downscaled to 256, but not for empty texture
-                if (((width%2==0) && (height%2==0)) && 
-                    ((width > 128) && (height > 8)) || ((height > 128) && (width > 8))) {
-                    if (((width%2==0) && (height%2==0)) && (width>=512) || (height>=512)) {
-                        while (((width > 256) && (height > 8)) || ((height > 256) && (width > 8))) {
-                            GLvoid *out = pixels;
-                            pixel_halfscale(pixels, &out, width, height, format, type);
-                            if (out != pixels && pixels!=datab)
-                                free(pixels);
-                            pixels = out;
-                            width /= 2;
-                            height /= 2;
-                            bound->shrink=1;
-                        }
-                    } else {
-                        GLvoid *out = pixels;
-                        pixel_halfscale(pixels, &out, width, height, format, type);
-                        if (out != pixels && pixels!=datab)
-                            free(pixels);
-                        pixels = out;
-                        width /= 2;
-                        height /= 2;
-                        bound->shrink = 1;
-                    }
-                }
-                break;
-            case 8: //advertise 8192 max texture size, but >2048 are shrinked to 2048
-                if ((width>4096) || (height>4096)) {
-                    GLvoid *out = pixels;
-                    pixel_quarterscale(pixels, &out, width, height, format, type);
-                    if (out != pixels && pixels!=datab)
-                        free(pixels);
-                    pixels = out;
-                    width /= 4;
-                    height /= 4;
-                    bound->shrink=2;
-                } else
-                if ((width>2048) || (height>2048)) {
-                    GLvoid *out = pixels;
-                    pixel_halfscale(pixels, &out, width, height, format, type);
-                    if (out != pixels && pixels!=datab)
-                        free(pixels);
-                    pixels = out;
-                    width /= 2;
-                    height /= 2;
-                    bound->shrink=1;
-                }
-                break;
-            case 9: //advertise 8192 max texture size, but >4096 are quadshrinked and >512 are shrinked, but not for empty texture
-                if ((width>4096) || (height>4096)) {
-                    GLvoid *out = pixels;
-                    pixel_quarterscale(pixels, &out, width, height, format, type);
-                    if (out != pixels && pixels!=datab)
-                        free(pixels);
-                    pixels = out;
-                    width /= 4;
-                    height /= 4;
-                    bound->shrink=2;
-                } else
-                if ((width>512) || (height>512)) {
-                    GLvoid *out = pixels;
-                    pixel_halfscale(pixels, &out, width, height, format, type);
-                    if (out != pixels && pixels!=datab)
-                        free(pixels);
-                    pixels = out;
-                    width /= 2;
-                    height /= 2;
-                    bound->shrink=1;
-                }
-                break;
-            case 10://advertise 8192 max texture size, but >2048 are quadshrinked and >512 are shrinked, but not for empty texture
-                if ((width>2048) || (height>2048)) {
-                    GLvoid *out = pixels;
-                    pixel_quarterscale(pixels, &out, width, height, format, type);
-                    if (out != pixels && pixels!=datab)
-                        free(pixels);
-                    pixels = out;
-                    width /= 4;
-                    height /= 4;
-                    bound->shrink=2;
-                } else
-                if ((width>512) || (height>512)) {
-                    GLvoid *out = pixels;
-                    pixel_halfscale(pixels, &out, width, height, format, type);
-                    if (out != pixels && pixels!=datab)
-                        free(pixels);
-                    pixels = out;
-                    width /= 2;
-                    height /= 2;
-                    bound->shrink=1;
-                }
-                break;
             }
         }
         
         if (globals4es.texdump) {
             if (bound) {
-                pixel_to_ppm(pixels, width, height, format, type, bound->texture);
+                pixel_to_ppm(pixels, width, height, format, type, bound->texture, glstate->texture.pack_align);
             }
         }
     } else {
@@ -698,9 +697,10 @@ void gl4es_glTexImage2D(GLenum target, GLint level, GLint internalformat,
 		((internalformat==GL_RGB) || (internalformat==3) || (internalformat==GL_RGB8) || (internalformat==GL_BGR) || (internalformat==GL_RGB5)) || (globals4es.texstream==2) ) {
 			bound->streamingID = AddStreamed(width, height, bound->texture);
 			if (bound->streamingID>-1) {	// success
+                bound->shrink = 0;  // no shrink on Stream texture
 				bound->streamed = true;
 				ApplyFilterID(bound->streamingID, bound->min_filter, bound->mag_filter);
-				GLboolean tmp = glstate->enable.texture_2d[glstate->texture.active];
+				GLboolean tmp = IS_TEX2D(glstate->enable.texture[glstate->texture.active]);
 				LOAD_GLES(glDisable);
 				LOAD_GLES(glEnable);
 				if (tmp)
@@ -714,62 +714,10 @@ void gl4es_glTexImage2D(GLenum target, GLint level, GLint internalformat,
 	    }
 #endif
 	    if (bound) {
-            bound->shrink = 0;
             if (!bound->streamed)
                 swizzle_texture(width, height, &format, &type, internalformat, new_format, NULL);	// convert format even if data is NULL
-            if ((globals4es.texshrink>0) && !bound->streamed) {
-                switch(globals4es.texshrink) {
-                    case 1: //everything / 2
-                            width /= 2;
-                            height /= 2;
-                            bound->shrink = 1;
-                            break;
-                    case 2: //only > 512 /2
-                        if((width>512) || (height>512)) {
-                            width /= 2;
-                            height /= 2;
-                            bound->shrink = 1;
-                        }
-                        break;
-                    case 3: //only > 256 /2
-                        if((width>256) || (height>256)) {
-                            width /= 2;
-                            height /= 2;
-                            bound->shrink = 1;
-                        }
-                        break;
-                    case 4: //only > 256 /2, >=1024 /4
-                        if((width>1024) || (height>1024)) {
-                            width /= 4;
-                            height /= 4;
-                            bound->shrink = 2;
-                        } else if((width>256) || (height>256)) {
-                            width /= 2;
-                            height /= 2;
-                            bound->shrink = 1;
-                        }
-                        break;
-                    case 5: //every > 256 is downscaled to 256, but not for empty texture
-                        break;
-                    case 6: //only > 128 /2, >=512 is downscaled to 256 ), but not for empty texture
-                        break;
-                    case 7: //only > 512 /2, but not for empty texture
-                        break;
-                    case 8: //advertise 8192 max texture size, but >2048 are shrinked to 2048
-                    case 9: //advertise 8192 max texture size, but >4096 are quadshrinked and >512 are shrinked, but not for empty texture (but >2048 are not supported anyway)
-                    case 10://advertise 8192 max texture size, but >2048 are quadshrinked and >512 are shrinked, but not for empty texture (but >2048 are not supported anyway)
-                        if((width>4096) || (height>4096)) {
-                            width /= 4;
-                            height /= 4;
-                            bound->shrink = 2;
-                        } else if((width>2048) || (height>2048)) {
-                            width /= 2;
-                            height /= 2;
-                            bound->shrink = 1;
-                        }                    
-                        break;
-                }
-            }
+            width = nlevel(width, bound->shrink);
+            height = nlevel(height, bound->shrink);
 	    }
 	}
     
@@ -787,81 +735,138 @@ void gl4es_glTexImage2D(GLenum target, GLint level, GLint internalformat,
     LOAD_GLES(glTexSubImage2D);
     LOAD_GLES(glTexParameteri);
 
-    switch (target) {
-        case GL_PROXY_TEXTURE_2D:
-            break;
-        default: {
-            GLsizei nheight = (hardext.npot==2)?height:npot(height), nwidth = (hardext.npot==2)?width:npot(width);
+    {
+        GLsizei nheight = (hardext.npot==2)?height:npot(height), nwidth = (hardext.npot==2)?width:npot(width);
+        if(target==GL_TEXTURE_RECTANGLE_ARB && hardext.npot==1) {
+            nheight = height;
+            nwidth = width;
+        }
 #ifdef PANDORA
 #define NO_1x1
 #endif
 #ifdef NO_1x1
-            #define MIN_SIZE 2
-            if(level==0) {
-                if(nwidth < MIN_SIZE) nwidth=MIN_SIZE;
-                if(nheight < MIN_SIZE) nheight=MIN_SIZE;
-            }
-            #undef MIN_SIZE
-#endif
-            if (globals4es.texstream && bound && bound->streamed) {
-				nwidth = width;
-				nheight = height;
-            }
-            if (bound && (level == 0)) {
-                bound->width = width;
-                bound->height = height;
-                bound->nwidth = nwidth;
-                bound->nheight = nheight;
-                bound->format = format;
-                bound->type = type;
-                bound->compressed = false;
-            }
-            if ((bound) && (globals4es.automipmap==4) && (nwidth!=nheight))
-                bound->mipmap_auto = 0;
-                
-            if (!(globals4es.texstream && bound && bound->streamed)) {
-                if (bound && ((bound->mipmap_need && (globals4es.automipmap!=3)) || (bound->mipmap_auto)))
-                    gles_glTexParameteri( target, GL_GENERATE_MIPMAP, GL_TRUE );
-                else {
-                    gles_glTexParameteri( target, GL_GENERATE_MIPMAP, GL_FALSE );
-                    if ((bound) && (bound->mipmap_need)) {
-                        // remove the need for mipmap...
-                        bound->mipmap_need = 0;
-                        gl4es_glTexParameteri(target, GL_TEXTURE_MIN_FILTER, bound->min_filter);
-                        gl4es_glTexParameteri(target, GL_TEXTURE_MAG_FILTER, bound->mag_filter);
-                    }
-                }
-                
-                if (height != nheight || width != nwidth) {
-                    gles_glTexImage2D(target, level, format, nwidth, nheight, border,
-                                    format, type, NULL);
-                    if (pixels) gles_glTexSubImage2D(target, level, 0, 0, width, height,
-                                         format, type, pixels);
-                    errorGL();
-#ifdef NO_1x1
-                    if(level==0 && (width==1 || height==1 && pixels)) {
-                        // complete the texture, juste in ase it use GL_REPEAT
-                        // also, don't keep the fact we have resized, the non-adjusted coordinates will work (as the texture is enlarged)
-                        if(width==1) {gles_glTexSubImage2D(target, level, 1, 0, width, height, format, type, pixels); nwidth=1;}
-                        if(height==1) {gles_glTexSubImage2D(target, level, 0, 1, width, height, format, type, pixels); nheight=1;}
-                        if(width==1 && height==1) {   // create a manual mipmap just in case_state
-                            gles_glTexSubImage2D(target, level, 1, 1, width, height, format, type, pixels);
-                            gles_glTexImage2D(target, 1, format, 1, 1, 0, format, type, pixels);
-                        }
-                    }
-#endif
-                } else {
-                    gles_glTexImage2D(target, level, format, width, height, border,
-                                    format, type, pixels);
-                    errorGL();
-                }
-                /*if (bound && bound->mipmap_need && !bound->mipmap_auto && (globals4es.automipmap!=3))
-                    gles_glTexParameteri( target, GL_GENERATE_MIPMAP, GL_FALSE );*/
-            } else {
-                if (pixels)
-                    gl4es_glTexSubImage2D(target, level, 0, 0, width, height, format, type, pixels);	// (should never happens) updload the 1st data...
-                }
+        #define MIN_SIZE 2
+        if(level==0) {
+            if(nwidth < MIN_SIZE) nwidth=MIN_SIZE;
+            if(nheight < MIN_SIZE) nheight=MIN_SIZE;
         }
+        #undef MIN_SIZE
+#endif
+        if (globals4es.texstream && bound && bound->streamed) {
+            nwidth = width;
+            nheight = height;
+        }
+        if (bound && (level == 0)) {
+            bound->width = width;
+            bound->height = height;
+            bound->nwidth = nwidth;
+            bound->nheight = nheight;
+            bound->format = format;
+            bound->type = type;
+            bound->compressed = false;
+        }
+        if ((bound) && (globals4es.automipmap==4) && (nwidth!=nheight))
+            bound->mipmap_auto = 0;
+
+        if((bound) && (target==GL_TEXTURE_RECTANGLE_ARB && hardext.npot==1)) {
+            gl4es_glTexParameteri(rtarget, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            gl4es_glTexParameteri(rtarget, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        }
+
+        if (!(globals4es.texstream && bound && bound->streamed)) {
+            if (bound && (target!=GL_TEXTURE_RECTANGLE_ARB) && ((bound->mipmap_need && (globals4es.automipmap!=3)) || (bound->mipmap_auto)))
+                gles_glTexParameteri( rtarget, GL_GENERATE_MIPMAP, GL_TRUE );
+            else {
+                //if(target!=GL_TEXTURE_RECTANGLE_ARB) gles_glTexParameteri( rtarget, GL_GENERATE_MIPMAP, GL_FALSE );
+                if ((bound)  && (itarget!=ENABLED_CUBE_MAP && target!=GL_TEXTURE_RECTANGLE_ARB) && (bound->mipmap_need)) {
+                    // remove the need for mipmap...
+                    bound->mipmap_need = 0;
+                    gl4es_glTexParameteri(rtarget, GL_TEXTURE_MIN_FILTER, bound->min_filter);
+                    gl4es_glTexParameteri(rtarget, GL_TEXTURE_MAG_FILTER, bound->mag_filter);
+                }
+            }
+            
+            if (height != nheight || width != nwidth) {
+                gles_glTexImage2D(rtarget, level, format, nwidth, nheight, border,
+                                format, type, NULL);
+                if (pixels) gles_glTexSubImage2D(rtarget, level, 0, 0, width, height,
+                                        format, type, pixels);
+                errorGL();
+#ifdef NO_1x1
+                if(level==0 && (width==1 || height==1 && pixels)) {
+                    // complete the texture, juste in case it use GL_REPEAT
+                    // also, don't keep the fact we have resized, the non-adjusted coordinates will work (as the texture is enlarged)
+                    if(width==1) {gles_glTexSubImage2D(rtarget, level, 1, 0, width, height, format, type, pixels); nwidth=1;}
+                    if(height==1) {gles_glTexSubImage2D(rtarget, level, 0, 1, width, height, format, type, pixels); nheight=1;}
+                    if(width==1 && height==1) {   // create a manual mipmap just in case_state
+                        gles_glTexSubImage2D(rtarget, level, 1, 1, width, height, format, type, pixels);
+                        gles_glTexImage2D(rtarget, 1, format, 1, 1, 0, format, type, pixels);
+                    }
+                }
+#endif
+            } else {
+                gles_glTexImage2D(rtarget, level, format, width, height, border,
+                                format, type, pixels);
+                errorGL();
+            }
+            // check if base_level is set... and calculate lower level mipmap
+            if(bound->base_level == level) {
+                int leveln = level, nw = width, nh = height, nww=nwidth, nhh=nheight;
+                int pot = (nh==nhh && nw==nww);
+                void *ndata = pixels;
+                while(leveln) {
+                    if(pixels) {
+                        GLvoid *out = ndata;
+                        pixel_doublescale(ndata, &out, nw, nh, format, type);
+                        if (out != ndata && ndata!=pixels)
+                            free(ndata);
+                        ndata = out;
+                    }
+                    nw <<= 1;
+                    nh <<= 1;
+                    nww <<= 1;
+                    nhh <<= 1;
+                    --leveln;
+                    gles_glTexImage2D(rtarget, leveln, format, nww, nhh, border,
+                                    format, type, (pot)?ndata:NULL);
+                    if(!pot && pixels) gles_glTexSubImage2D(rtarget, leveln, 0, 0, nw, nh,
+                                        format, type, ndata);
+                }
+                if (ndata!=pixels)
+                    free(ndata);
+            }
+            // check if max_level is set... and calculate highr level mipmap
+            if(bound->max_level == level) {
+                int leveln = level, nw = nwidth, nh = nheight, nww=width, nhh=height;
+                int pot = (nh==nhh && nw==nww);
+                void *ndata = pixels;
+                while(nw!=1 && nh!=1) {
+                    if(pixels) {
+                        GLvoid *out = ndata;
+                        pixel_halfscale(ndata, &out, nww, nhh, format, type);
+                        if (out != ndata && ndata!=pixels)
+                            free(ndata);
+                        ndata = out;
+                    }
+                    nw = nlevel(nw, 1);
+                    nh = nlevel(nh, 1);
+                    nww = nlevel(nww, 1);
+                    nhh = nlevel(nhh, 1);
+                    ++leveln;
+                    gles_glTexImage2D(rtarget, leveln, format, nw, nh, border,
+                                    format, type, (pot)?ndata:NULL);
+                    if(!pot && pixels) gles_glTexSubImage2D(rtarget, leveln, 0, 0, nww, nhh,
+                                        format, type, ndata);
+                }
+                if (ndata!=pixels)
+                    free(ndata);
+            }
+        /*if (bound && bound->mipmap_need && !bound->mipmap_auto && (globals4es.automipmap!=3))
+            gles_glTexParameteri( rtarget, GL_GENERATE_MIPMAP, GL_FALSE );*/
+        } else {
+            if (pixels)
+                gl4es_glTexSubImage2D(rtarget, level, 0, 0, width, height, format, type, pixels);	// (should never happens) updload the 1st data...
+            }
     }
     if ((target==GL_TEXTURE_2D) && globals4es.texcopydata && bound && ((globals4es.texstream && !bound->streamed) || !globals4es.texstream)) {
 	    if (bound->data) 
@@ -869,7 +874,7 @@ void gl4es_glTexImage2D(GLenum target, GLint level, GLint internalformat,
 	    else 
 			bound->data = malloc(width*height*4);
 	    if (datab) {
-		    if (!pixel_convert(pixels, &bound->data, width, height, format, type, GL_RGBA, GL_UNSIGNED_BYTE, 0))
+		    if (!pixel_convert(pixels, &bound->data, width, height, format, type, GL_RGBA, GL_UNSIGNED_BYTE, 0, glstate->texture.pack_align))
 			    printf("LIBGL: Error on pixel_convert when TEXCOPY in glTexImage2D\n");
 	    } else {
 		//memset(bound->data, 0, width*height*4);
@@ -885,29 +890,32 @@ void gl4es_glTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoff
                      GLsizei width, GLsizei height, GLenum format, GLenum type,
                      const GLvoid *data) {
 
-	//PUSH_IF_COMPILING(glTexSubImage2D);
     GLuint old_glbatch = glstate->gl_batch;
-    if (glstate->gl_batch) {
+    if (glstate->gl_batch || glstate->list.pending) {
         flush();
         glstate->gl_batch = 0;
+    } else {
+        PUSH_IF_COMPILING(glTexSubImage2D);
     }
 
     GLvoid *datab = (GLvoid*)data;
 	if (glstate->vao->unpack)
-		datab += (uintptr_t)glstate->vao->pack->data;
+		datab += (uintptr_t)glstate->vao->unpack->data;
     GLvoid *pixels = (GLvoid*)datab;
+
+    const GLuint itarget = what_target(target);
+    const GLuint rtarget = map_tex_target(target);
 
     LOAD_GLES(glTexSubImage2D);
     LOAD_GLES(glTexParameteri);
     noerrorShim();
-    //printf("glTexSubImage2D on target=%s with unpack_row_length(%i), size(%i,%i), pos(%i,%i) and skip={%i,%i}, format=%s, type=%s, level=%i, texture=%u\n", PrintEnum(target), glstate->texture.unpack_row_length, width, height, xoffset, yoffset, glstate->texture.unpack_skip_pixels, glstate->texture.unpack_skip_rows, PrintEnum(format), PrintEnum(type), level, glstate->texture.bound[glstate->texture.active]->texture);
+    //printf("glTexSubImage2D on target=%s with unpack_row_length(%i), size(%i,%i), pos(%i,%i) and skip={%i,%i}, format=%s, type=%s, level=%i, texture=%u\n", PrintEnum(target), glstate->texture.unpack_row_length, width, height, xoffset, yoffset, glstate->texture.unpack_skip_pixels, glstate->texture.unpack_skip_rows, PrintEnum(format), PrintEnum(type), level, glstate->texture.bound[glstate->texture.active][itarget]->texture);
     if (width==0 || height==0) {
         glstate->gl_batch = old_glbatch;
         return;
     }
-    target = map_tex_target(target);
     
-    gltexture_t *bound = glstate->texture.bound[glstate->texture.active];
+    gltexture_t *bound = glstate->texture.bound[glstate->texture.active][itarget];
     if (globals4es.automipmap) {
         if (bound && (level>0))
             if ((globals4es.automipmap==1) || (globals4es.automipmap==3) || bound->mipmap_need) {
@@ -936,10 +944,11 @@ void gl4es_glTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoff
     // compressed format are not handled here, so mask them....
     GLenum orig_internal = bound->orig_internal;
     GLenum internalformat = bound->internalformat;
-    if (orig_internal==GL_COMPRESSED_RGB) orig_internal=GL_RGB;
-    if (orig_internal==GL_COMPRESSED_RGBA) orig_internal=GL_RGBA;
-    if (internalformat==GL_COMPRESSED_RGB) internalformat=GL_RGB;
-    if (internalformat==GL_COMPRESSED_RGBA) internalformat=GL_RGBA;
+    // compressed format are not handled here, so mask them....
+    if (is_fake_compressed_rgb(orig_internal)) orig_internal=GL_RGB;
+    if (is_fake_compressed_rgba(orig_internal)) orig_internal=GL_RGBA;
+    if (is_fake_compressed_rgb(internalformat)) internalformat=GL_RGB;
+    if (is_fake_compressed_rgba(internalformat)) internalformat=GL_RGBA;
 
 
     GLvoid *old = pixels;
@@ -949,7 +958,7 @@ void gl4es_glTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoff
 		GLvoid *tmp = GetStreamingBuffer(bound->streamingID);
 		tmp += (yoffset*bound->width+xoffset)*2;
 		if (! pixel_convert(old, &tmp, width, height,
-						format, type, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, bound->width)) {
+						format, type, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, bound->width, glstate->texture.pack_align)) {
 			printf("LIBGL: swizzle error: (%#4x, %#4x -> GL_RGB, UNSIGNED_SHORT_5_6_5)\n",
 						format, type);
 		}
@@ -961,7 +970,7 @@ void gl4es_glTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoff
         //pixels = (GLvoid *)swizzle_texture(width, height, &format, &type, old);
         GLenum dest_format, dest_type;
         internal2format_type(orig_internal, &dest_format, &dest_type);
-        if (!pixel_convert(old, &pixels, width, height, format, type, dest_format, dest_type, 0)) {
+        if (!pixel_convert(old, &pixels, width, height, format, type, dest_format, dest_type, 0, glstate->texture.pack_align)) {
             printf("LIBGL: Error in pixel_convert while glTexSubImage2D\n");
         } else {
             format = dest_format;
@@ -969,7 +978,7 @@ void gl4es_glTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoff
             if(orig_internal!=internalformat) {
                 GLvoid* pix2 = pixels;
                 internal2format_type(internalformat, &dest_format, &dest_type);
-                if (!pixel_convert(pixels, &pix2, width, height, format, type, dest_format, dest_type, 0)) {
+                if (!pixel_convert(pixels, &pix2, width, height, format, type, dest_format, dest_type, 0, glstate->texture.pack_align)) {
                     printf("LIBGL: Error in pixel_convert while glTexSubImage2D\n");
                 }
                 if (pixels != pix2 && pixels != old)
@@ -1014,12 +1023,12 @@ void gl4es_glTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoff
 
     if (globals4es.texdump) {
         if (bound) {
-            pixel_to_ppm(pixels, width, height, format, type, bound->texture);
+            pixel_to_ppm(pixels, width, height, format, type, bound->texture, glstate->texture.pack_align);
         }
     }
 
     if (bound && bound->mipmap_need && !bound->mipmap_auto && (globals4es.automipmap!=3) && (!globals4es.texstream || (globals4es.texstream && !bound->streamed)))
-        gles_glTexParameteri( target, GL_GENERATE_MIPMAP, GL_TRUE );
+        gles_glTexParameteri( rtarget, GL_GENERATE_MIPMAP, GL_TRUE );
 
     if (bound && globals4es.texstream && bound->streamed) {
 /*	// copy the texture to the buffer
@@ -1028,19 +1037,66 @@ void gl4es_glTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoff
 		memcpy(tmp+((yy+yoffset)*bound->width+xoffset)*2, pixels+(yy*width)*2, width*2);
 	}*/
     } else {
-        gles_glTexSubImage2D(target, level, xoffset, yoffset,
+        gles_glTexSubImage2D(rtarget, level, xoffset, yoffset,
 					 width, height, format, type, pixels);
 		errorGL();
+        // check if base_level is set... and calculate lower level mipmap
+        if(bound->base_level == level) {
+            int leveln = level, nw = width, nh = height, xx=xoffset, yy=yoffset;
+            void *ndata = pixels;
+            while(leveln) {
+                if(pixels) {
+                    GLvoid *out = ndata;
+                    pixel_doublescale(ndata, &out, nw, nh, format, type);
+                    if (out != ndata && ndata!=pixels)
+                        free(ndata);
+                    ndata = out;
+                }
+                nw <<= 1;
+                nh <<= 1;
+                xx <<= 1;
+                yy <<= 1;
+                --leveln;
+                gles_glTexSubImage2D(rtarget, leveln, xx, yy, nw, nh,
+                                    format, type, ndata);
+            }
+            if (ndata!=pixels)
+                free(ndata);
+        }
+        // check if max_level is set... and calculate highr level mipmap
+        if(bound->max_level == level) {
+            int leveln = level, nw = width, nh = height, xx=xoffset, yy=yoffset;
+            void *ndata = pixels;
+            while(nw!=1 && nh!=1) {
+                if(pixels) {
+                    GLvoid *out = ndata;
+                    pixel_halfscale(ndata, &out, nw, nh, format, type);
+                    if (out != ndata && ndata!=pixels)
+                        free(ndata);
+                    ndata = out;
+                }
+                nw = nlevel(nw, 1);
+                nh = nlevel(nh, 1);
+                xx = nlevel(xx, 1);
+                yy = nlevel(yy, 1);
+                ++leveln;
+                gles_glTexSubImage2D(rtarget, leveln, xx, yy, nw, nh,
+                                    format, type, ndata);
+            }
+            if (ndata!=pixels)
+                free(ndata);
+        }
+
     }
 
-    if (bound && bound->mipmap_need && !bound->mipmap_auto && (globals4es.automipmap!=3) && (!globals4es.texstream || (globals4es.texstream && !bound->streamed)))
-        gles_glTexParameteri( target, GL_GENERATE_MIPMAP, GL_FALSE );
+    /*if (bound && bound->mipmap_need && !bound->mipmap_auto && (globals4es.automipmap!=3) && (!globals4es.texstream || (globals4es.texstream && !bound->streamed)))
+        gles_glTexParameteri( rtarget, GL_GENERATE_MIPMAP, GL_FALSE );*/
 
     if ((target==GL_TEXTURE_2D) && globals4es.texcopydata && bound && ((globals4es.texstream && !bound->streamed) || !globals4es.texstream)) {
     //printf("*texcopy* glTexSubImage2D, xy=%i,%i, size=%i,%i=>%i,%i, format=%s, type=%s, tex=%u\n", xoffset, yoffset, width, height, bound->width, bound->height, PrintEnum(format), PrintEnum(type), bound->glname);
         GLvoid * tmp = bound->data;
         tmp += (yoffset*bound->width + xoffset)*4;
-        if (!pixel_convert(pixels, &tmp, width, height, format, type, GL_RGBA, GL_UNSIGNED_BYTE, bound->width))
+        if (!pixel_convert(pixels, &tmp, width, height, format, type, GL_RGBA, GL_UNSIGNED_BYTE, bound->width, glstate->texture.pack_align))
             printf("LIBGL: Error on pixel_convert while TEXCOPY in glTexSubImage2D\n");
     }
 
@@ -1055,30 +1111,30 @@ void gl4es_glTexImage1D(GLenum target, GLint level, GLint internalFormat,
                   GLenum format, GLenum type, const GLvoid *data) {
 
     // TODO: maybe too naive to force GL_TEXTURE_2D here?
-    gl4es_glTexImage2D(GL_TEXTURE_2D, level, internalFormat, width, 1,
+    gl4es_glTexImage2D(GL_TEXTURE_1D, level, internalFormat, width, 1,
                  border, format, type, data);
 }
 void gl4es_glTexSubImage1D(GLenum target, GLint level, GLint xoffset,
                      GLsizei width, GLenum format, GLenum type,
                      const GLvoid *data) {
 
-    gl4es_glTexSubImage2D(GL_TEXTURE_2D, level, xoffset, 0,
+    gl4es_glTexSubImage2D(GL_TEXTURE_1D, level, xoffset, 0,
                     width, 1, format, type, data);
 }
 void gl4es_glCopyTexImage1D(GLenum target, GLint level, GLenum internalformat, GLint x, GLint y,
 		    GLsizei width, GLint border) {
-    gl4es_glCopyTexImage2D(GL_TEXTURE_2D, level, internalformat, x, y, width, 1, border);
+    gl4es_glCopyTexImage2D(GL_TEXTURE_1D, level, internalformat, x, y, width, 1, border);
 		    
 }
 
 void gl4es_glCopyTexSubImage1D(GLenum target, GLint level, GLint xoffset, GLint x, GLint y,
                                 GLsizei width) {
-    gl4es_glCopyTexSubImage2D(GL_TEXTURE_2D, level, xoffset, 0, x, y, width, 1);
+    gl4es_glCopyTexSubImage2D(GL_TEXTURE_1D, level, xoffset, 0, x, y, width, 1);
 }
                                 
 void gl4es_glCopyTexSubImage3D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset,
                                 GLint x, GLint y, GLsizei width, GLsizei height) {
-    gl4es_glCopyTexSubImage2D(GL_TEXTURE_2D, level, xoffset, yoffset, x, y, width, height);
+    gl4es_glCopyTexSubImage2D(GL_TEXTURE_3D, level, xoffset, yoffset, x, y, width, height);
 }
 
                                 
@@ -1090,14 +1146,14 @@ void gl4es_glTexImage3D(GLenum target, GLint level, GLint internalFormat,
                   GLenum format, GLenum type, const GLvoid *data) {
 
     // TODO: maybe too naive to force GL_TEXTURE_2D here?
-    gl4es_glTexImage2D(GL_TEXTURE_2D, level, internalFormat, width, height,
+    gl4es_glTexImage2D(GL_TEXTURE_3D, level, internalFormat, width, height,
                  border, format, type, data);
 }
 void gl4es_glTexSubImage3D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, 
                      GLsizei width, GLsizei height, GLsizei depth, GLenum format,
                      GLenum type, const GLvoid *data) {
 
-    gl4es_glTexSubImage2D(target, level, xoffset, yoffset,
+    gl4es_glTexSubImage2D(GL_TEXTURE_3D, level, xoffset, yoffset,
                     width, height, format, type, data);
 }
 
@@ -1110,46 +1166,63 @@ void gl4es_glPixelStorei(GLenum pname, GLint param) {
     switch (pname) {
         case GL_UNPACK_ROW_LENGTH:
             glstate->texture.unpack_row_length = param;
-            break;
+            return;
         case GL_UNPACK_SKIP_PIXELS:
             glstate->texture.unpack_skip_pixels = param;
-            break;
+            return;
         case GL_UNPACK_SKIP_ROWS:
             glstate->texture.unpack_skip_rows = param;
-            break;
+            return;
         case GL_UNPACK_LSB_FIRST:
             glstate->texture.unpack_lsb_first = param;
-            break;
+            return;
         case GL_UNPACK_IMAGE_HEIGHT:
             glstate->texture.unpack_image_height = param;
-            break;
+            return;
         case GL_UNPACK_SWAP_BYTES:
         case GL_PACK_SWAP_BYTES:
             // Fake... TODO?
             //glstate->texture.unpack_lsb_first = param;
-            break;
+            return;
         case GL_PACK_ROW_LENGTH:
             glstate->texture.pack_row_length = param;
-            break;
+            return;
         case GL_PACK_SKIP_PIXELS:
             glstate->texture.pack_skip_pixels = param;
-            break;
+            return;
         case GL_PACK_SKIP_ROWS:
             glstate->texture.pack_skip_rows = param;
-            break;
+            return;
         case GL_PACK_LSB_FIRST:
             glstate->texture.pack_lsb_first = param;
-            break;
+            return;
         case GL_PACK_IMAGE_HEIGHT:
             glstate->texture.pack_image_height = param;
+            return;
+        case GL_PACK_ALIGNMENT:
+            if(glstate->texture.pack_align==param)
+                return;
+            if (param!=1 && param!=2 && param!=4 && param!=8) {
+                errorShim(GL_INVALID_VALUE);
+                return;
+            }
+            glstate->texture.pack_align=param;
             break;
-        default:
-			errorGL();
-            gles_glPixelStorei(pname, param);
+        case GL_UNPACK_ALIGNMENT:
+            if(glstate->texture.unpack_align==param)
+                return;
+            if (param!=1 && param!=2 && param!=4 && param!=8) {
+                errorShim(GL_INVALID_VALUE);
+                return;
+            }
+            glstate->texture.unpack_align=param;
             break;
     }
+    errorGL();
+    gles_glPixelStorei(pname, param);
 }
-GLboolean gl4es_glIsTexture(	GLuint texture) {
+
+GLboolean gl4es_glIsTexture(GLuint texture) {
 	noerrorShim();
 	if (!texture) {
 		return GL_FALSE;
@@ -1171,7 +1244,7 @@ GLboolean gl4es_glIsTexture(	GLuint texture) {
 gltexture_t* gl4es_getTexture(GLenum target, GLuint texture) {
     // Get a texture based on glID
     gltexture_t* tex = NULL;
-    if (texture == 0) return tex;
+    //if (texture == 0) return tex; // texture 0 is a texture like any other... it is not "unbind" texture in fact!!
     int ret;
     khint_t k;
     khash_t(tex) *list = glstate->texture.list;
@@ -1195,14 +1268,16 @@ gltexture_t* gl4es_getTexture(GLenum target, GLuint texture) {
         tex->uploaded = false;
         tex->mipmap_auto = default_tex_mipmap || (globals4es.automipmap==1);
         tex->mipmap_need = (globals4es.automipmap==1)?1:0;
-        tex->alpha = true;
-        tex->streamed = false;
         tex->streamingID = -1;
+        tex->base_level = -1;
+        tex->max_level = -1;
+        tex->streamed = false;
+        tex->alpha = true;
+        tex->compressed = false;
         tex->min_filter = tex->mag_filter = (globals4es.automipmap==1)?GL_LINEAR_MIPMAP_LINEAR:GL_LINEAR;
         tex->format = GL_RGBA;
         tex->type = GL_UNSIGNED_BYTE;
-        tex->orig_internal = GL_RGBA;
-        tex->internalformat = GL_RGBA;
+        tex->shrink = 0;
         tex->data = NULL;
     } else {
         tex = kh_value(list, k);
@@ -1212,8 +1287,9 @@ gltexture_t* gl4es_getTexture(GLenum target, GLuint texture) {
 #define batch_activetex (glstate->statebatch.active_tex_changed?(glstate->statebatch.active_tex-GL_TEXTURE0):glstate->texture.active)
 void gl4es_glBindTexture(GLenum target, GLuint texture) {
 	noerrorShim();
+    //printf("glBindTexture(%s, %u), active=%i, client=%i, list.active=%p (compiling=%d, pending=%d)\n", PrintEnum(target), texture, glstate->texture.active, glstate->texture.client, glstate->list.active, glstate->list.compiling, glstate->list.pending);
+    if(glstate->list.pending) flush();
     if ((target!=GL_PROXY_TEXTURE_2D) && (glstate->list.active && (glstate->gl_batch && !glstate->list.compiling)))  {
-        //printf("=> glBindTexture(0x%04X, %u), active=%i, client=%i, batch_active=%i, batch_bound=0x%04X, batch_tex=%u\n", target, texture, glstate->texture.active, glstate->texture.client, batch_activetex, glstate->statebatch.bound_targ[batch_activetex], glstate->statebatch.bound_tex[batch_activetex]);
         if ((glstate->statebatch.bound_targ[batch_activetex] == target) && (glstate->statebatch.bound_tex[batch_activetex] == texture))
             return; // nothing to do...
         if (glstate->statebatch.bound_targ[batch_activetex]) {
@@ -1221,7 +1297,6 @@ void gl4es_glBindTexture(GLenum target, GLuint texture) {
         }
         glstate->statebatch.bound_targ[batch_activetex] = target;
         glstate->statebatch.bound_tex[batch_activetex] = texture;
-        //printf(" <= glBindTexture(0x%04X, %u), active=%i, client=%i, batch_active=%i, batch_bound=0x%04X, batch_tex=%u\n", target, texture, glstate->texture.active, glstate->texture.client, batch_activetex, glstate->statebatch.bound_targ[batch_activetex], glstate->statebatch.bound_tex[batch_activetex]);
     }
     if ((target!=GL_PROXY_TEXTURE_2D) && ((glstate->list.compiling || glstate->gl_batch) && glstate->list.active)) {
         // check if already a texture binded, if yes, create a new list
@@ -1231,18 +1306,14 @@ void gl4es_glBindTexture(GLenum target, GLuint texture) {
     	int tex_changed = 1;
 		int streamingID = -1;
         gltexture_t *tex = NULL;
-        //printf("glBindTexture(0x%04X, %u), active=%i, client=%i\n", target, texture, glstate->texture.active, glstate->texture.client);
-        if (texture) {
-            tex = gl4es_getTexture(target, texture);
-            if (glstate->texture.bound[glstate->texture.active] == tex)
-            	tex_changed = 0;
-            texture = tex->glname;
-			if (globals4es.texstream && tex->streamed)
-				streamingID = tex->streamingID;
-        } else {
-            if (glstate->texture.bound[glstate->texture.active] == NULL)
-            	tex_changed = 0;
-        }
+        const GLuint itarget = what_target(target);
+
+        tex = gl4es_getTexture(target, texture);
+        if (glstate->texture.bound[glstate->texture.active][itarget] == tex)
+            tex_changed = 0;
+        texture = tex->glname;
+        if (globals4es.texstream && tex->streamed)
+            streamingID = tex->streamingID;
 	
         LOAD_GLES(glDisable);
         LOAD_GLES(glEnable);
@@ -1250,10 +1321,10 @@ tex_changed=1;  // seems buggy, temporary disabling that...
 
         if (tex_changed) {
 
-			GLboolean tmp = glstate->enable.texture_2d[glstate->texture.active];
+			GLuint tmp = glstate->enable.texture[glstate->texture.active];
 #ifdef TEXSTREAM
 	        if (globals4es.texstream) {  // unbind streaming texture if any...
-	            gltexture_t *bound = glstate->texture.bound[glstate->texture.active];
+	            gltexture_t *bound = glstate->texture.bound[glstate->texture.active][itarget];
 	            if (bound && bound->streamed) {
 	                if (tmp)
                         gles_glDisable(GL_TEXTURE_STREAM_IMG);
@@ -1264,23 +1335,22 @@ tex_changed=1;  // seems buggy, temporary disabling that...
 	        }
 #endif
 
-	        glstate->texture.rect_arb[glstate->texture.active] = (target == GL_TEXTURE_RECTANGLE_ARB);
-	        target = map_tex_target(target);
+	        const GLuint rtarget = map_tex_target(target);
 
-            glstate->texture.bound[glstate->texture.active] = tex;
+            glstate->texture.bound[glstate->texture.active][itarget] = tex;
 
             LOAD_GLES(glBindTexture);
 #ifdef TEXSTREAM
             if (globals4es.texstream && (streamingID>-1)) {
-                if (tmp)
+                if (IS_TEX2D(tmp))
                     gles_glDisable(GL_TEXTURE_2D);
                 ActivateStreaming(streamingID);
-                if (tmp)
+                if (IS_TEX2D(tmp))
                     gles_glEnable(GL_TEXTURE_STREAM_IMG);
             } else 
 #endif
             {
-                gles_glBindTexture(target, texture);
+                gles_glBindTexture(rtarget, texture);
                 errorGL();
             }
         }
@@ -1292,8 +1362,9 @@ tex_changed=1;  // seems buggy, temporary disabling that...
 void gl4es_glTexParameteri(GLenum target, GLenum pname, GLint param) {
     PUSH_IF_COMPILING(glTexParameteri);
     LOAD_GLES(glTexParameteri);
-    target = map_tex_target(target);
-    gltexture_t *texture = glstate->texture.bound[glstate->texture.active];
+    const GLint itarget = what_target(target);
+    const GLuint rtarget = map_tex_target(target);
+    gltexture_t *texture = glstate->texture.bound[glstate->texture.active][itarget];
     switch (pname) {
 	case GL_TEXTURE_MIN_FILTER:
 	case GL_TEXTURE_MAG_FILTER:
@@ -1323,17 +1394,24 @@ void gl4es_glTexParameteri(GLenum target, GLenum pname, GLint param) {
 	case GL_TEXTURE_WRAP_T:
 	    switch (param) {
 		case GL_CLAMP:
+        case GL_CLAMP_TO_BORDER:
 		    param = GL_CLAMP_TO_EDGE;
 		    break;
 	    }
         if (pname==GL_TEXTURE_WRAP_S) if (texture) texture->wrap_s = param;
 		if (pname==GL_TEXTURE_WRAP_T) if (texture) texture->wrap_t = param;
 	    break;
+	case GL_TEXTURE_WRAP_R:
+        // ignore it on GLES...
+        break;
 	case GL_TEXTURE_MAX_LEVEL:
 	    if (texture)
-		texture->mipmap_auto = (param)?1:0;
+		    texture->max_level = param;
 	    return;			// not on GLES
     case GL_TEXTURE_BASE_LEVEL:
+	    if (texture)
+		    texture->base_level = param;
+	    return;			// not on GLES
 	case GL_TEXTURE_MIN_LOD:
 	case GL_TEXTURE_MAX_LOD:
 	case GL_TEXTURE_LOD_BIAS:
@@ -1345,9 +1423,10 @@ void gl4es_glTexParameteri(GLenum target, GLenum pname, GLint param) {
                 default_tex_mipmap = texture->mipmap_auto;
         } else
             default_tex_mipmap = (param)?1:0;       // default?
-	    return;         // We control the behavour later
+	    //return;         // We control the behavour later
+        break;
     }
-    gles_glTexParameteri(target, pname, param);
+    gles_glTexParameteri(rtarget, pname, param);
     errorGL();
 }
 
@@ -1355,8 +1434,63 @@ void gl4es_glTexParameterf(GLenum target, GLenum pname, GLfloat param) {
     gl4es_glTexParameteri(target, pname, param);
 }
 
+void gl4es_glTexParameterfv(GLenum target, GLenum pname, const GLfloat * params) {
+    switch (pname) {
+	case GL_TEXTURE_MIN_FILTER:
+	case GL_TEXTURE_MAG_FILTER:
+	case GL_TEXTURE_WRAP_S:
+	case GL_TEXTURE_WRAP_T:
+	case GL_TEXTURE_WRAP_R:
+	case GL_TEXTURE_MAX_LEVEL:
+    case GL_TEXTURE_BASE_LEVEL:
+	case GL_TEXTURE_MIN_LOD:
+	case GL_TEXTURE_MAX_LOD:
+	case GL_TEXTURE_LOD_BIAS:
+	case GL_GENERATE_MIPMAP:
+        gl4es_glTexParameteri(target, pname, params[0]);
+        return;
+    case GL_TEXTURE_BORDER_COLOR:
+        // not supported on GLES,
+        noerrorShim();
+        return;
+    }
+    PUSH_IF_COMPILING(glTexParameterfv);
+    LOAD_GLES(glTexParameterfv);
+    errorGL();
+    const GLuint rtarget = map_tex_target(target);
+    gles_glTexParameterfv(rtarget, pname, params);
+
+}
+
+void gl4es_glTexParameteriv(GLenum target, GLenum pname, const GLint * params) {
+    switch (pname) {
+	case GL_TEXTURE_MIN_FILTER:
+	case GL_TEXTURE_MAG_FILTER:
+	case GL_TEXTURE_WRAP_S:
+	case GL_TEXTURE_WRAP_T:
+	case GL_TEXTURE_WRAP_R:
+	case GL_TEXTURE_MAX_LEVEL:
+    case GL_TEXTURE_BASE_LEVEL:
+	case GL_TEXTURE_MIN_LOD:
+	case GL_TEXTURE_MAX_LOD:
+	case GL_TEXTURE_LOD_BIAS:
+	case GL_GENERATE_MIPMAP:
+        gl4es_glTexParameteri(target, pname, params[0]);
+        return;
+    case GL_TEXTURE_BORDER_COLOR:
+        // not supported on GLES,
+        noerrorShim();
+        return;
+    }
+    PUSH_IF_COMPILING(glTexParameteriv);
+    LOAD_GLES(glTexParameteriv);
+    errorGL();
+    const GLuint rtarget = map_tex_target(target);
+    gles_glTexParameteriv(rtarget, pname, params);
+}
+
 void gl4es_glDeleteTextures(GLsizei n, const GLuint *textures) {
-    if (glstate->gl_batch) flush();
+    if (glstate->gl_batch || glstate->list.pending) flush();
 	noerrorShim();
     LOAD_GLES(glDeleteTextures);
     khash_t(tex) *list = glstate->texture.list;
@@ -1370,8 +1504,9 @@ void gl4es_glDeleteTextures(GLsizei n, const GLuint *textures) {
                 tex = kh_value(list, k);
                 int a;
                 for (a=0; a<MAX_TEX; a++) {
-                    if (tex == glstate->texture.bound[a])
-                        glstate->texture.bound[a] = NULL;
+                    for (int j=0; j<ENABLED_TEXTURE_LAST; j++)
+                        if (tex == glstate->texture.bound[a][j])
+                            glstate->texture.bound[a][j] = NULL;
                 }
 				gles_glDeleteTextures(1, &tex->glname);
 				errorGL();
@@ -1398,7 +1533,7 @@ void gl4es_glDeleteTextures(GLsizei n, const GLuint *textures) {
 void gl4es_glGenTextures(GLsizei n, GLuint * textures) {
     if (n<=0) 
 		return;
-    if (glstate->gl_batch) flush();
+    if (glstate->gl_batch || glstate->list.pending) flush();
     LOAD_GLES(glGenTextures);
     gles_glGenTextures(n, textures);
     errorGL();
@@ -1424,15 +1559,18 @@ void gl4es_glGenTextures(GLsizei n, GLuint * textures) {
 			tex->width = 0;
 			tex->height = 0;
 			tex->uploaded = false;
-			tex->mipmap_auto = 0;
-			tex->mipmap_need = 0;
+            tex->mipmap_auto = default_tex_mipmap || (globals4es.automipmap==1);
+            tex->mipmap_need = (globals4es.automipmap==1)?1:0;
 			tex->streamingID = -1;
+            tex->base_level = -1;
+            tex->max_level = -1;
 			tex->streamed = false;
             tex->alpha = true;
             tex->compressed = false;
-			tex->min_filter = tex->mag_filter = GL_NEAREST;
+			tex->min_filter = tex->mag_filter = (globals4es.automipmap==1)?GL_LINEAR_MIPMAP_LINEAR:GL_LINEAR;
             tex->format = GL_RGBA;
             tex->type = GL_UNSIGNED_BYTE;
+            tex->shrink = 0;
 			tex->data = NULL;
 		} else {
 			tex = kh_value(list, k);
@@ -1451,43 +1589,37 @@ GLboolean gl4es_glAreTexturesResident(GLsizei n, const GLuint *textures, GLboole
 void gl4es_glGetTexLevelParameteriv(GLenum target, GLint level, GLenum pname, GLint *params) {
     //printf("glGetTexLevelParameteriv(%s, %d, %s, %p)\n", PrintEnum(target), level, PrintEnum(pname), params);
 	// simplification: (mostly) not taking "target" into account here
-    if (glstate->gl_batch) flush();
+    if (glstate->gl_batch || glstate->list.pending) flush();
 	*params = 0;
 	noerrorShim();
-	gltexture_t* bound = glstate->texture.bound[glstate->texture.active];
+    const GLuint itarget = what_target(target);
+    const GLuint rtarget = map_tex_target(target);
+	gltexture_t* bound = glstate->texture.bound[glstate->texture.active][itarget];
 	switch (pname) {
 		case GL_TEXTURE_WIDTH:
-			if (target==GL_PROXY_TEXTURE_2D)
-				(*params) = proxy_width>>level;
-			else
-				(*params) = ((bound)?bound->width:2048)>>level;
-            if(bound && ((bound->orig_internal==GL_COMPRESSED_RGB) || (bound->orig_internal==GL_COMPRESSED_RGBA))) {
-                if (*params<4)      // minimum size of a compressed block is 4
-                    *params = 0;
-            } else {
-                if (*params<=0)     // 1 is the minimum, not 0
-                    *params = 1;
+			if (rtarget==GL_PROXY_TEXTURE_2D)
+				(*params) = nlevel(proxy_width,level);
+			else {
+				(*params) = nlevel((bound)?bound->width:2048,level);
+                if(level && (!bound || (bound && !(bound->mipmap_auto || bound->mipmap_need))))
+                    (*params) = 0;   // Mipmap level not loaded
             }
 			break;
 		case GL_TEXTURE_HEIGHT: 
-			if (target==GL_PROXY_TEXTURE_2D)
-				(*params) = proxy_height>>level;
-			else
-				(*params) = ((bound)?bound->height:2048)>>level; 
-            if(bound && ((bound->orig_internal==GL_COMPRESSED_RGB) || (bound->orig_internal==GL_COMPRESSED_RGBA))) {
-                if (*params<4)      // minimum size of a compressed block is 4
-                    *params = 0;
-            } else {
-                if (*params<=0)      // 1 is the minimum, not 0, but only on uncompressed textures
-                    *params = 1;
+			if (rtarget==GL_PROXY_TEXTURE_2D)
+				(*params) = nlevel(proxy_height,level);
+			else {
+				(*params) = nlevel((bound)?bound->height:2048,level); 
+                if(level && (!bound || (bound && !(bound->mipmap_auto || bound->mipmap_need))))
+                    (*params) = 0;   // Mipmap level not loaded
             }
 			break;
 		case GL_TEXTURE_INTERNAL_FORMAT:
-            if (target==GL_PROXY_TEXTURE_2D)
+            if (rtarget==GL_PROXY_TEXTURE_2D)
 				(*params) = proxy_intformat;
 			else {
                 if (bound && bound->compressed)
-                    (*params) = bound->format;
+                    (*params) = bound->internalformat;
                 else {
                     if(bound && ((bound->orig_internal==GL_COMPRESSED_RGB) || (bound->orig_internal==GL_COMPRESSED_RGBA))) {
                         if(bound->orig_internal==GL_COMPRESSED_RGB)
@@ -1530,9 +1662,9 @@ void gl4es_glGetTexLevelParameteriv(GLenum target, GLint level, GLenum pname, GL
 			break;
 		case GL_TEXTURE_COMPRESSED_IMAGE_SIZE:
             if(bound && ((bound->orig_internal==GL_COMPRESSED_RGB) || (bound->orig_internal==GL_COMPRESSED_RGBA))) {
-                int w = bound->width>>level;
-                int h = bound->height>>level;
-                w = ((w>>2)+1) << 2; h = ((h>>2)+1) << 2;   //DXT works on 4x4 blocks...
+                int w = nlevel((bound->width>>level),2); //DXT works on 4x4 blocks...
+                int h = nlevel((bound->height>>level),2);
+                w<<=2; h<<=2;
                 if (bound->orig_internal==GL_COMPRESSED_RGB) //DXT1, 64bits (i.e. size=8) for a 4x4 block
                     (*params) = (w*h)/2;
                 else    //DXT5, 64+64 (i.e. size = 16) for a 4x4 block
@@ -1540,9 +1672,25 @@ void gl4es_glGetTexLevelParameteriv(GLenum target, GLint level, GLenum pname, GL
             } else
 			 (*params) = (bound)?(bound->width*bound->height*4):0;
 			break;
+        case GL_TEXTURE_BORDER:
+            (*params) = 0;
+            break;
+        case GL_TEXTURE_INTENSITY_SIZE:
+            if(bound)
+                (*params) = 32;  // is it correct ? GLES doesn't store Intensity... Shall I return 0 instead? Or fake it and return 8?
+            else
+                (*params) = 0;
+            break;
+        case GL_TEXTURE_LUMINANCE_SIZE:
+            if(bound)
+                (*params) = (bound->orig_internal==GL_LUMINANCE || bound->orig_internal==GL_LUMINANCE_ALPHA)?8:0;
+            else
+                (*params) = 0;
+            break;
+            break;
 		default:
 			errorShim(GL_INVALID_ENUM);	//Wrong here...
-			printf("Stubbed glGetTexLevelParameteriv(%04x, %i, %04x, %p)\n", target, level, pname, params);
+			printf("Stubbed glGetTexLevelParameteriv(%s, %i, %s, %p)\n", PrintEnum(target), level, PrintEnum(pname), params);
 	}
 }
 
@@ -1554,14 +1702,15 @@ void popViewport();
 
 void gl4es_glGetTexImage(GLenum target, GLint level, GLenum format, GLenum type, GLvoid * img) {
 //printf("glGetTexImage(%s, %i, %s, %s, %p)\n", PrintEnum(target), level, PrintEnum(format), PrintEnum(type), img);
-     GLuint old_glbatch = glstate->gl_batch;
-     if (glstate->gl_batch) {
-         flush();
-         glstate->gl_batch = 0;
-     }
-	if (glstate->texture.bound[glstate->texture.active]==NULL)
+    GLuint old_glbatch = glstate->gl_batch;
+    if (glstate->gl_batch || glstate->list.pending) {
+        flush();
+        glstate->gl_batch = 0;
+    }
+    const GLuint itarget = what_target(target);    
+	if (glstate->texture.bound[glstate->texture.active][itarget]==NULL)
 		return;		// no texture bounded...
-	gltexture_t* bound = glstate->texture.bound[glstate->texture.active];
+	gltexture_t* bound = glstate->texture.bound[glstate->texture.active][itarget];
 	int width = bound->width;
 	int height = bound->height;
 	int nwidth = bound->nwidth;
@@ -1571,13 +1720,13 @@ void gl4es_glGetTexImage(GLenum target, GLint level, GLenum format, GLenum type,
 		//printf("STUBBED glGetTexImage with level=%i\n", level);
         void* tmp = malloc(width*height*pixel_sizeof(format, type)); // tmp space...
         void* tmp2;
-        gl4es_glGetTexImage(target, 0, format, type, tmp);
+        gl4es_glGetTexImage(map_tex_target(target), 0, format, type, tmp);
         for (int i=0; i<level; i++) {
             pixel_halfscale(tmp, &tmp2, width, height, format, type);
             free(tmp);
             tmp = tmp2;
-            if(width>1) width>>=1;
-            if(height>1) height>>=1;
+            width = nlevel(width, 1);
+            height = nlevel(height, 1);
         }
         memcpy(img, tmp, width*height*pixel_sizeof(format, type));
         free(tmp);
@@ -1600,7 +1749,7 @@ void gl4es_glGetTexImage(GLenum target, GLint level, GLenum format, GLenum type,
 #ifdef TEXSTREAM
     if (globals4es.texstream && bound->streamed) {
         noerrorShim();
-        pixel_convert(GetStreamingBuffer(bound->streamingID), &dst, width, height, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, format, type, 0);
+        pixel_convert(GetStreamingBuffer(bound->streamingID), &dst, width, height, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, format, type, 0, glstate->texture.unpack_align);
         readfboEnd();
         if (old_glbatch)
             glstate->gl_batch=old_glbatch;
@@ -1610,7 +1759,7 @@ void gl4es_glGetTexImage(GLenum target, GLint level, GLenum format, GLenum type,
     if (globals4es.texcopydata && bound->data) {
         //printf("texcopydata* glGetTexImage(0x%04X, %d, 0x%04x, 0x%04X, %p)\n", target, level, format, type, img);
         noerrorShim();
-        if (!pixel_convert(bound->data, &dst, width, height, GL_RGBA, GL_UNSIGNED_BYTE, format, type, 0))
+        if (!pixel_convert(bound->data, &dst, width, height, GL_RGBA, GL_UNSIGNED_BYTE, format, type, 0, glstate->texture.unpack_align))
             printf("LIBGL: Error on pixel_convert while glGetTexImage\n");
 	} else {
 		// Setup an FBO the same size of the texture
@@ -1753,6 +1902,7 @@ void gl4es_glGetTexImage(GLenum target, GLint level, GLenum format, GLenum type,
 }
 
 void gl4es_glActiveTexture( GLenum texture ) {
+ if (glstate->list.pending) flush();
  if (glstate->list.active && (glstate->gl_batch && !glstate->list.compiling))  {
     if (glstate->statebatch.active_tex_changed) {
         if(glstate->statebatch.active_tex == texture)
@@ -1786,7 +1936,7 @@ void gl4es_glClientActiveTexture( GLenum texture ) {
  // try to speed-up things...
  if (glstate->texture.client == (texture - GL_TEXTURE0))
     return;
- if (glstate->gl_batch) flush();
+ if (glstate->gl_batch || glstate->list.pending) flush();
  glstate->texture.client = texture - GL_TEXTURE0;
  LOAD_GLES(glClientActiveTexture);
  gles_glClientActiveTexture(texture);
@@ -1795,7 +1945,7 @@ void gl4es_glClientActiveTexture( GLenum texture ) {
 void gl4es_glReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, GLvoid * data) {
     //printf("glReadPixels(%i, %i, %i, %i, %s, %s, 0x%p)\n", x, y, width, height, PrintEnum(format), PrintEnum(type), data);
     GLuint old_glbatch = glstate->gl_batch;
-    if (glstate->gl_batch) {
+    if (glstate->gl_batch || glstate->list.pending) {
         flush();
         glstate->gl_batch = 0;
     }
@@ -1828,7 +1978,7 @@ void gl4es_glReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum 
     GLvoid *pixels = malloc(width*height*4);
     gles_glReadPixels(x, y, width, height, use_bgra?GL_BGRA:GL_RGBA, GL_UNSIGNED_BYTE, pixels);
     if (! pixel_convert(pixels, &dst, width, height,
-					    use_bgra?GL_BGRA:GL_RGBA, GL_UNSIGNED_BYTE, format, type, 0)) {
+					    use_bgra?GL_BGRA:GL_RGBA, GL_UNSIGNED_BYTE, format, type, 0,glstate->texture.unpack_align)) {
         LOGE("LIBGL: ReadPixels error: (%s, UNSIGNED_BYTE -> %s, %s )\n",
             PrintEnum(use_bgra?GL_BGRA:GL_RGBA), PrintEnum(format), PrintEnum(type));
     }
@@ -1843,7 +1993,7 @@ void gl4es_glCopyTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint 
     //printf("glCopyTexSubImage2D(%s, %i, %i, %i, %i, %i, %i, %i), bounded texture=%u format/type=%s, %s\n", PrintEnum(target), level, xoffset, yoffset, x, y, width, height, (glstate->texture.bound[glstate->texture.active])?glstate->texture.bound[glstate->texture.active]->texture:0, PrintEnum((glstate->texture.bound[glstate->texture.active])?glstate->texture.bound[glstate->texture.active]->format:0), PrintEnum((glstate->texture.bound[glstate->texture.active])?glstate->texture.bound[glstate->texture.active]->type:0));
     // PUSH_IF_COMPILING(glCopyTexSubImage2D);
     GLuint old_glbatch = glstate->gl_batch;
-    if (glstate->gl_batch) {
+    if (glstate->gl_batch || glstate->list.pending) {
         flush();
         glstate->gl_batch = 0;
     }
@@ -1856,8 +2006,10 @@ void gl4es_glCopyTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint 
     glbuffer_t *unpack = glstate->vao->unpack;
     glstate->vao->pack = NULL;
     glstate->vao->unpack = NULL;
+
+    const GLuint itarget = what_target(target);
  
-    gltexture_t* bound = glstate->texture.bound[glstate->texture.active];
+    gltexture_t* bound = glstate->texture.bound[glstate->texture.active][itarget];
     if (!bound) {
         errorShim(GL_INVALID_OPERATION);
         glstate->gl_batch = old_glbatch;
@@ -1902,7 +2054,7 @@ void gl4es_glCopyTexImage2D(GLenum target,  GLint level,  GLenum internalformat,
      //printf("glCopyTexImage2D(0x%04X, %i, 0x%04X, %i, %i, %i, %i, %i), current_fb=%u\n", target, level, internalformat, x, y, width, height, border, current_fb);
      //PUSH_IF_COMPILING(glCopyTexImage2D);
      GLuint old_glbatch = glstate->gl_batch;
-     if (glstate->gl_batch) {
+     if (glstate->gl_batch || glstate->list.pending) {
          flush();
          glstate->gl_batch = 0;
      }
@@ -2007,18 +2159,21 @@ void gl4es_glCompressedTexImage2D(GLenum target, GLint level, GLenum internalfor
 							GLsizei width, GLsizei height, GLint border,
 							GLsizei imageSize, const GLvoid *data) 
 {
+    const GLuint itarget = what_target(target);
+    const GLuint rtarget = map_tex_target(target);
     if (target == GL_PROXY_TEXTURE_2D) {
         proxy_width = (width>2048)?0:width;
         proxy_height = (height>2048)?0:height;
         return;
     }
      GLuint old_glbatch = glstate->gl_batch;
-     if (glstate->gl_batch) {
+     if (glstate->gl_batch || glstate->list.pending) {
          flush();
          glstate->gl_batch = 0;
      }
 
-    if (glstate->texture.bound[glstate->texture.active]==NULL) {
+    gltexture_t* bound = glstate->texture.bound[glstate->texture.active][itarget]; 
+    if (bound==NULL) {
 		errorShim(GL_INVALID_OPERATION);
 	    return;		// no texture bounded...
 	}
@@ -2027,12 +2182,6 @@ void gl4es_glCompressedTexImage2D(GLenum target, GLint level, GLenum internalfor
     if (internalformat==GL_RGBA8)
         internalformat = GL_COMPRESSED_RGBA_S3TC_DXT1_EXT;
     // test if internalformat is not a compressed one
-    if (level != 0) {
-		noerrorShim();
-	    //TODO
-	    //printf("STUBBED glCompressedTexImage2D with level=%i\n", level);
-	    //return;
-    }
     if ((width<=0) || (height<=0)) {
         noerrorShim();
         return; // nothing to do...
@@ -2077,20 +2226,33 @@ void gl4es_glCompressedTexImage2D(GLenum target, GLint level, GLenum internalfor
             }
             // automaticaly reduce the pixel size
             half=pixels;
-            glstate->texture.bound[glstate->texture.active]->alpha = (internalformat==GL_COMPRESSED_RGB_S3TC_DXT1_EXT)?false:true;
-            format = (internalformat==GL_COMPRESSED_RGB_S3TC_DXT1_EXT)?GL_RGB:GL_RGBA;
-            type = (internalformat==GL_COMPRESSED_RGB_S3TC_DXT1_EXT)?GL_UNSIGNED_SHORT_5_6_5:GL_UNSIGNED_SHORT_4_4_4_4;
-            if (pixel_convert(pixels, &half, width, height, GL_RGBA, GL_UNSIGNED_BYTE, format, type, 0))
-                fact = 0;
-//            if (pixel_thirdscale(pixels, &half, width, height, GL_RGBA, GL_UNSIGNED_BYTE)) 
-//                fact = 1;
-            else {
+            bound->alpha = (internalformat==GL_COMPRESSED_RGB_S3TC_DXT1_EXT)?false:true;
+            if(globals4es.nodownsampling==1) {  // will be removed soon, avoid16bits is better
                 format = GL_RGBA;
                 type = GL_UNSIGNED_BYTE;
+            } else {
+                if(globals4es.avoid16bits) {
+                    format = GL_RGBA;
+                    type = GL_UNSIGNED_BYTE;
+                } else {
+                    format = (internalformat==GL_COMPRESSED_RGB_S3TC_DXT1_EXT)?GL_RGB:GL_RGBA;
+#ifdef PANDORA
+                    type = (internalformat==GL_COMPRESSED_RGB_S3TC_DXT1_EXT)?GL_UNSIGNED_SHORT_5_6_5:(internalformat==GL_COMPRESSED_RGBA_S3TC_DXT1_EXT)?GL_UNSIGNED_SHORT_5_5_5_1:GL_UNSIGNED_SHORT_4_4_4_4;
+#else
+                    type = (internalformat==GL_COMPRESSED_RGB_S3TC_DXT1_EXT)?GL_UNSIGNED_SHORT_5_6_5:GL_UNSIGNED_SHORT_4_4_4_4;
+#endif
+                    if (pixel_convert(pixels, &half, width, height, GL_RGBA, GL_UNSIGNED_BYTE, format, type, 0, glstate->texture.pack_align))
+                        fact = 0;
+                    else {
+                        format = GL_RGBA;
+                        type = GL_UNSIGNED_BYTE;
+                    }
+                }
             }
-            glstate->texture.bound[glstate->texture.active]->format = format; //internalformat;
-            glstate->texture.bound[glstate->texture.active]->type = type;
-            glstate->texture.bound[glstate->texture.active]->compressed = true;
+            bound->format = format; //internalformat;
+            bound->type = type;
+            bound->compressed = true;
+            bound->internalformat = internalformat;
         } else {
             fact = 0;
         }
@@ -2098,7 +2260,10 @@ void gl4es_glCompressedTexImage2D(GLenum target, GLint level, GLenum internalfor
 		gl4es_glGetIntegerv(GL_UNPACK_ALIGNMENT, &oldalign);
 		if (oldalign!=1) 
             gl4es_glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-		gl4es_glTexImage2D(target, level, format, width>>fact, height>>fact, border, format, type, half);
+		gl4es_glTexImage2D(rtarget, level, format==GL_RGBA?GL_COMPRESSED_RGBA:GL_COMPRESSED_RGB, nlevel(width,fact), nlevel(height,fact), border, format, type, half);
+        // re-update bounded texture info
+        bound->compressed = true;
+        bound->internalformat = internalformat;
 		if (oldalign!=1) 
             gl4es_glPixelStorei(GL_UNPACK_ALIGNMENT, oldalign);
 		if (half!=pixels)
@@ -2106,11 +2271,12 @@ void gl4es_glCompressedTexImage2D(GLenum target, GLint level, GLenum internalfor
 		if (pixels!=datab)
 			free(pixels);
 	} else {
-	    glstate->texture.bound[glstate->texture.active]->alpha = true;
-        glstate->texture.bound[glstate->texture.active]->format = internalformat;
-        glstate->texture.bound[glstate->texture.active]->type = GL_UNSIGNED_BYTE;
-        glstate->texture.bound[glstate->texture.active]->compressed = true;
-	    gles_glCompressedTexImage2D(target, level, internalformat, width, height, border, imageSize, datab);
+	    bound->alpha = true;
+        bound->format = internalformat;
+        bound->type = GL_UNSIGNED_BYTE;
+        bound->internalformat = internalformat;
+        bound->compressed = true;
+	    gles_glCompressedTexImage2D(rtarget, level, internalformat, width, height, border, imageSize, datab);
 	}
 	glstate->vao->unpack = unpack;
     glstate->gl_batch = old_glbatch;
@@ -2120,13 +2286,14 @@ void gl4es_glCompressedTexSubImage2D(GLenum target, GLint level, GLint xoffset, 
 							   GLsizei width, GLsizei height, GLenum format, 
 							   GLsizei imageSize, const GLvoid *data) 
 {
-     GLuint old_glbatch = glstate->gl_batch;
-     if (glstate->gl_batch) {
-         flush();
-         glstate->gl_batch = 0;
-     }
-
-	if (glstate->texture.bound[glstate->texture.active]==NULL) {
+    const GLuint itarget = what_target(target);
+    const GLuint old_glbatch = glstate->gl_batch;
+    if (glstate->gl_batch || glstate->list.pending) {
+        flush();
+        glstate->gl_batch = 0;
+    }
+    gltexture_t *bound = glstate->texture.bound[glstate->texture.active][itarget];
+	if (bound==NULL) {
 		errorShim(GL_INVALID_OPERATION);
         glstate->gl_batch = old_glbatch;
 		return;		// no texture bounded...
@@ -2172,9 +2339,9 @@ void gl4es_glCompressedTexSubImage2D(GLenum target, GLint level, GLint xoffset, 
 		gl4es_glTexSubImage2D(target, level, xoffset/2, yoffset/2, width/2, height/2, GL_RGBA, GL_UNSIGNED_SHORT_4_4_4_4, half);
 		if (oldalign!=1) gl4es_glPixelStorei(GL_UNPACK_ALIGNMENT, oldalign);
 		#else
-        GLenum format = glstate->texture.bound[glstate->texture.active]->format;
-        GLenum type = glstate->texture.bound[glstate->texture.active]->type;
-		pixel_convert(pixels, &half, width, height, GL_RGBA, GL_UNSIGNED_BYTE, format, type, 0);
+        GLenum format = bound->format;
+        GLenum type = bound->type;
+		pixel_convert(pixels, &half, width, height, GL_RGBA, GL_UNSIGNED_BYTE, format, type, 0, glstate->texture.pack_align);
 		gl4es_glTexSubImage2D(target, level, xoffset, yoffset, width, height, format, type, half);
 		#endif
 		if (half!=pixels)
@@ -2188,19 +2355,20 @@ void gl4es_glCompressedTexSubImage2D(GLenum target, GLint level, GLint xoffset, 
 }
 
 void gl4es_glGetCompressedTexImage(GLenum target, GLint lod, GLvoid *img) {
-    if (glstate->gl_batch) flush();
+    if (glstate->gl_batch || glstate->list.pending) flush();
 
-    gltexture_t* bound = glstate->texture.bound[glstate->texture.active];
+    const GLuint itarget = what_target(target); 
+    gltexture_t* bound = glstate->texture.bound[glstate->texture.active][itarget];
     //printf("glGetCompressedTexImage(%s, %i, %p), bound=%p, bound->orig_internal=%s\n", PrintEnum(target), lod, img, bound, (bound)?PrintEnum(bound->orig_internal):"nil");
     errorShim(GL_INVALID_OPERATION);
     if(!bound)
         return;
     if(bound->orig_internal!=GL_COMPRESSED_RGB && bound->orig_internal!=GL_COMPRESSED_RGBA)
         return;
-    int width = bound->width>>lod;
-    int height = bound->height>>lod;
-    int w = ((width>>2)+1)<<2;
-    int h = ((height>>2)+1)<<2;
+    int width = nlevel(bound->width,lod);
+    int height = nlevel(bound->height,lod);
+    int w = nlevel(width,2); w<<=2;
+    int h = nlevel(height,2); h<<=2;
 
     int alpha = (bound->orig_internal==GL_COMPRESSED_RGBA)?1:0;
 
@@ -2290,6 +2458,7 @@ void gl4es_glTexEnvfv(GLenum target, GLenum pname, const GLfloat *param) {
     gles_glTexEnvfv(target, pname, param);
 }
 void gl4es_glTexEnviv(GLenum target, GLenum pname, const GLint *param) {
+    if (glstate->list.pending) flush();
     if ((glstate->list.compiling || glstate->gl_batch) && glstate->list.active) {
 		NewStage(glstate->list.active, STAGE_TEXENV);
 		rlTexEnviv(glstate->list.active, target, pname, param);
@@ -2301,6 +2470,7 @@ void gl4es_glTexEnviv(GLenum target, GLenum pname, const GLint *param) {
 }
 void gl4es_glGetTexEnvfv(GLenum target, GLenum pname, GLfloat * params) {
     LOAD_GLES(glGetTexEnvfv);
+    if (glstate->list.pending) flush();
     if (glstate->list.active && (glstate->gl_batch && !glstate->list.compiling)) flush();
     if(target==GL_POINT_SPRITE && pname==GL_COORD_REPLACE)
         *params = glstate->texture.pscoordreplace[glstate->texture.active];
@@ -2310,6 +2480,7 @@ void gl4es_glGetTexEnvfv(GLenum target, GLenum pname, GLfloat * params) {
 }
 void gl4es_glGetTexEnviv(GLenum target, GLenum pname, GLint * params) {
     LOAD_GLES(glGetTexEnviv);
+    if (glstate->list.pending) flush();
     if (glstate->list.active && (glstate->gl_batch && !glstate->list.compiling)) flush();
     if(target==GL_POINT_SPRITE && pname==GL_COORD_REPLACE)
         *params = glstate->texture.pscoordreplace[glstate->texture.active];
@@ -2330,6 +2501,8 @@ void glGenTextures(GLsizei n, GLuint * textures) AliasExport("gl4es_glGenTexture
 void glDeleteTextures(GLsizei n, const GLuint * textures) AliasExport("gl4es_glDeleteTextures");
 void glTexParameteri(GLenum target, GLenum pname, GLint param) AliasExport("gl4es_glTexParameteri");
 void glTexParameterf(GLenum target, GLenum pname, GLfloat param) AliasExport("gl4es_glTexParameterf");
+void glTexParameterfv(GLenum target, GLenum pname, const GLfloat * params) AliasExport("gl4es_glTexParameterfv");
+void glTexParameteriv(GLenum target, GLenum pname, const GLint * params) AliasExport("gl4es_glTexParameteriv");
 GLboolean glAreTexturesResident(GLsizei n, const GLuint *textures, GLboolean *residences) AliasExport("gl4es_glAreTexturesResident");
 void glGetTexLevelParameteriv(GLenum target, GLint level, GLenum pname, GLint *params) AliasExport("gl4es_glGetTexLevelParameteriv");
 void glGetTexImage(GLenum target, GLint level, GLenum format, GLenum type, GLvoid * img) AliasExport("gl4es_glGetTexImage");

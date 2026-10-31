@@ -3,11 +3,13 @@ include_directories(util)
 #file(GLOB_RECURSE GL_SOURCES gl/*.c)
 SET(GL_SRC
     gl/array.c
+    gl/blend.c
     gl/buffers.c
     gl/debug.c
     gl/decompress.c
     gl/directstate.c
     gl/eval.c
+    gl/fog.c
     gl/framebuffers.c
     gl/getter.c
     gl/gl.c
@@ -28,8 +30,6 @@ SET(GL_SRC
     gl/texture.c
 	gl/wrap/gl.c
 	gl/wrap/gles.c
-	gl/wrap/gles2.c
-	gl/wrap/glesext.c
 	gl/wrap/glstub.c
 	gl/math/eval.c
 )
@@ -37,12 +37,14 @@ SET(GL_SRC
 SET(GL_H
     ../version.h
     gl/array.h
+    gl/blend.h
     gl/buffers.h
     gl/const.h
     gl/debug.h
     gl/decompress.h
     gl/defines.h
     gl/directstate.h
+    gl/fog.h
     gl/eval.h
     gl/framebuffers.h
     gl/gles.h
@@ -67,7 +69,6 @@ SET(GL_H
     gl/texture.h
     gl/math/eval.h
     gl/wrap/es.h
-    gl/wrap/gles2.h
     gl/wrap/gles.h
     gl/wrap/gl.h
     gl/wrap/stub.h
@@ -81,12 +82,14 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
 	    glx/hardext.c
 	    glx/glx.c
 	    glx/lookup.c
+        glx/rpi.c
 	    glx/streaming.c
         glx/utils.c
     )
     list(APPEND GL_H
         glx/glx.h
         glx/hardext.h
+        glx/rpi.h
         glx/streaming.h
         glx/utils.h
     )

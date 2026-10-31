@@ -26,9 +26,16 @@
 #include "SDL_video.h"
 #include "SDL_screenkeyboard.h"
 #include "SDL_audio.h"
-#include <jni.h>
 
 #include "begin_code.h"
+
+#if defined(__cplusplus)
+struct JavaVM;
+#else
+struct JNIInvokeInterface;
+typedef const struct JNIInvokeInterface* JavaVM;
+#endif
+
 /* Set up for C function definitions, even when using C++ */
 #ifdef __cplusplus
 extern "C" {
@@ -131,11 +138,29 @@ extern DECLSPEC void SDLCALL SDL_ANDROID_RestartMyself(const char *restartParams
 
 enum {
 	SDL_ANDROID_CONFIG_VIDEO_DEPTH_BPP = 0, /* Can be 16 or 24 for software video modes, OpenGL supports 16/24/32 */
+	SDL_ANDROID_CONFIG_VIDEO_ORIENTATION_PORTRAIT = 1, /* 0 = landscape screen orientation, 1 = portrait screen orientation */
 	/* TODO: more options, see Globals.java */
 };
 
-/* Set SDL Android-specifc option, such as video depth or mouse emulation mode. Most options require restarting the app. */
+/* Set SDL Android-specifc option, and save it to SDL config file, such as video depth or mouse emulation mode. Most options require restarting the app. */
 extern DECLSPEC void SDLCALL SDL_ANDROID_SetConfigOption(int option, int value);
+
+/* Change mouse emulation mode, pass -1 to any option to keep the current value, this does not change SDL config file.
+   Currently only relativeMovement is processed, other options are ignored  */
+extern DECLSPEC void SDLCALL SDL_ANDROID_SetMouseEmulationMode(
+	int relativeMovement, int relativeMovementSpeed, int relativeMovementAcceleration,
+	int leftClickMode, int leftClickKey, int leftClickTimeout,
+	int rightClickMode, int rightClickKey, int rightClickTimeout,
+	int moveMouseWithJoystick, int moveMouseWithJoystickSpeed, int moveMouseWithJoystickAcceleration,
+	int moveMouseWithGyroscope, int moveMouseWithGyroscopeSpeed,
+	int forceHardwareMouse, int showScreenUnderFinger,
+	int fingerHover, int fingerHoverJitterFilter, int generateSubframeTouchEvents
+);
+
+extern DECLSPEC int SDLCALL SDL_ANDROID_GetMouseEmulationMode();
+
+/* Control the System mouse pointer visibility */
+extern DECLSPEC void SDLCALL SDL_ANDROID_SetSystemMousePointerVisible(int visible);
 
 #ifdef __cplusplus
 }
