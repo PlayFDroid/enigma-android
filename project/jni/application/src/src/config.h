@@ -29,4 +29,14 @@
 #define SDL_MIX_INIT 1
 #define STDC_HEADERS 1
 
+#ifndef SYSTEM_DATA_DIR
+#define SYSTEM_DATA_DIR "."
+#endif
+#ifndef DOCDIR
+#define DOCDIR "./doc"
+#endif
+#ifndef LOCALEDIR
+#define LOCALEDIR "./locale"
+#endif
+
 #endif /* ENIGMA_CONFIG_H */
