@@ -328,7 +328,7 @@ static void read_string (LexState *ls, int del, SemInfo *seminfo) {
 }
 
 
-static int llex (LexState *ls, SemInfo *seminfo) {
+int llex (LexState *ls, SemInfo *seminfo) {
   luaZ_resetbuffer(ls->buff);
   for (;;) {
     switch (ls->current) {
