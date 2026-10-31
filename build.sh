@@ -92,13 +92,13 @@ function project_needs_setup {
 	  ! grep -q "package ${app_name};" project/src/Globals.java || \
 	  ! grep -q "package ${base_app_name}${named_variant};" project/src/Globals.java || \
 	[ "$(readlink AndroidAppSettings.cfg)" -nt "project/src/Globals.java" ] || \
-	[ -n "$(find project/java/* \
-				project/javaSDL2/* \
-				project/jni/sdl2/android-project/app/src/main/java/org/libsdl/app/* \
+	[ -n "$(find project/java \
+				$( [ -d project/javaSDL2 ] && echo project/javaSDL2 ) \
+				$( [ -d project/jni/sdl2/android-project/app/src/main/java/org/libsdl/app ] && echo project/jni/sdl2/android-project/app/src/main/java/org/libsdl/app ) \
 				project/AndroidManifestTemplate.xml \
 			-cnewer \
 				project/src/Globals.java \
-		)" \
+		2>/dev/null )" \
 	]
 }
 
