@@ -29,12 +29,7 @@
 
 #include "begin_code.h"
 
-#if defined(__cplusplus)
-struct JavaVM;
-#else
-struct JNIInvokeInterface;
-typedef const struct JNIInvokeInterface* JavaVM;
-#endif
+#include <jni.h>
 
 /* Set up for C function definitions, even when using C++ */
 #ifdef __cplusplus
