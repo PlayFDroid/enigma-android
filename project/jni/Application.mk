@@ -1,5 +1,8 @@
 APP_PROJECT_PATH := $(call my-dir)/..
 
+APP_ALLOW_MISSING_DEPS := true
+APP_PLATFORM := android-24
+
 include jni/Settings.mk
 
 APP_STL := c++_shared
