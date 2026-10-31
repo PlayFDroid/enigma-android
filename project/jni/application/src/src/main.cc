@@ -87,10 +87,7 @@ XERCES_CPP_NAMESPACE_USE
 
 #ifdef ANDROID
 #include <jni.h>
-#include <android/configuration.h>
 #include <android/log.h>
-#include <android/native_activity.h>
-#include <android_native_app_glue.h>
 #define fprintf(f, ...) __android_log_print(ANDROID_LOG_INFO, "Enigma", __VA_ARGS__);
 #endif
 
