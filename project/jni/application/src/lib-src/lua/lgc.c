@@ -155,6 +155,16 @@ size_t luaC_separateudata (lua_State *L, int all) {
 }
 
 
+static int check_weak_mode(const char *s, char c) {
+  if (!s) return 0;
+  while (*s) {
+    if (*s == c) return 1;
+    s++;
+  }
+  return 0;
+}
+
+
 static int traversetable (global_State *g, Table *h) {
   int i;
   int weakkey = 0;
@@ -164,8 +174,8 @@ static int traversetable (global_State *g, Table *h) {
     markobject(g, h->metatable);
   mode = gfasttm(g, h->metatable, TM_MODE);
   if (mode && ttisstring(mode)) {  /* is there a weak mode? */
-    weakkey = (strchr(svalue(mode), 'k') != NULL);
-    weakvalue = (strchr(svalue(mode), 'v') != NULL);
+    weakkey = check_weak_mode(svalue(mode), 'k');
+    weakvalue = check_weak_mode(svalue(mode), 'v');
     if (weakkey || weakvalue) {  /* is really weak? */
       h->marked &= ~(KEYWEAK | VALUEWEAK);  /* clear bits */
       h->marked |= cast_byte((weakkey << KEYWEAKBIT) |

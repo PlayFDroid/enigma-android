@@ -207,7 +207,7 @@ typedef union TString {
 } TString;
 
 
-#define getstr(ts)	cast(const char *, (ts) + 1)
+#define getstr(ts)	cast(const char *, (const char *)(ts) + sizeof(union TString))
 #define svalue(o)       getstr(rawtsvalue(o))
 
 

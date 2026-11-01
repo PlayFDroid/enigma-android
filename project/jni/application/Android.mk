@@ -38,7 +38,7 @@ LOCAL_SRC_FILES := $(filter-out $(addprefix $(APPDIR)/, $(APPLICATION_BUILD_EXCL
 # If you use setEnvironment.sh you may write "env CXXFLAGS='-frtti -fexceptions' ../setEnvironment.sh ./configure".
 #LOCAL_CPP_FEATURES := exceptions rtti
 
-LOCAL_CFLAGS :=
+LOCAL_CFLAGS := -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0
 LOCAL_C_INCLUDES := $(foreach D, $(APP_SUBDIRS), $(LOCAL_PATH)/$(D))
 
 ifeq ($(APPLICATION_OVERLAPS_SYSTEM_HEADERS),y)

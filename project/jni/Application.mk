@@ -7,7 +7,7 @@ include jni/Settings.mk
 
 APP_STL := c++_shared
 
-APP_CFLAGS := -g
+APP_CFLAGS := -g -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0
 ifneq ($(NDK_DEBUG),1)
 APP_CFLAGS += -Oz -DNDEBUG # -Oz works best with clang
 endif
