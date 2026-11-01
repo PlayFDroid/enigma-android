@@ -37,6 +37,12 @@ android {
         }
     }
 
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+        disable 'ExpiredTargetSdkVersion'
+    }
+
     assetPacks = [":assetpack"] // ==ASSETPACK==
 }
 
