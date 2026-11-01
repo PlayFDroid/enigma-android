@@ -148,10 +148,9 @@ char *getwd ();
 #  if VMS
 #   define getcwd(buf, max) (getcwd) (buf, max, 0)
 #  else
-#   ifdef __ANDROID__
-__attribute__((overloadable))
-#   endif
+#   ifndef __ANDROID__
 char *getcwd ();
+#   endif
 #  endif
 # endif
 
