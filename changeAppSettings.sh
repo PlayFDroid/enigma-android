@@ -1175,6 +1175,7 @@ if [ -e "project/jni/application/src/AndroidData/assetpack" ] ; then
 	true # Do nothing...
 else
 	$SEDI "/==ASSETPACK==/ d" project/app/build.gradle
+	$SEDI "/:assetpack/ d" project/settings.gradle
 fi
 
 if [ -e project/jni/application/src/project.diff ]; then patch -p1 --dry-run -f -R < project/jni/application/src/project.diff > /dev/null 2>&1 || patch -p1 --no-backup-if-mismatch < project/jni/application/src/project.diff || exit 1 ; fi

@@ -20,7 +20,7 @@ rm -f ../../../../../../$APPNAME-$APPVER.apk
 zipalign -P 16 4 Signed.apk ../../../../../../$APPNAME-$APPVER.apk
 rm -f Signed.apk
 echo Using keystore $ANDROID_KEYSTORE_FILE
-stty -echo
+stty -echo 2>/dev/null || true
 apksigner sign --ks $ANDROID_KEYSTORE_FILE --ks-key-alias $ANDROID_KEYSTORE_ALIAS $PASS ../../../../../../$APPNAME-$APPVER.apk || exit 1
-stty echo
+stty echo 2>/dev/null || true
 echo
