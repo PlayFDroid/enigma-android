@@ -581,6 +581,8 @@ void Application::initSysDatapaths(const std::string &prefFilename)
 
     systemAppDataPath = progDir + "/../Resources/data";
 
+#elif defined(__ANDROID__)
+    systemAppDataPath = "./data";
 #else
     // Unix -- we get our data path from the installation
     systemAppDataPath = systemPath;

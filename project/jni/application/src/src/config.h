@@ -30,7 +30,7 @@
 #define STDC_HEADERS 1
 
 #ifndef SYSTEM_DATA_DIR
-#define SYSTEM_DATA_DIR "."
+#define SYSTEM_DATA_DIR "data"
 #endif
 #ifndef DOCDIR
 #define DOCDIR "./doc"
