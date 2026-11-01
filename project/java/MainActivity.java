@@ -394,10 +394,9 @@ public class MainActivity extends Activity
 			{
 				if( Globals.AutoDetectOrientation )
 					Globals.HorizontalOrientation = isCurrentOrientationHorizontal();
-				while( isCurrentOrientationHorizontal() != Globals.HorizontalOrientation ||
-						((KeyguardManager)getSystemService(Context.KEYGUARD_SERVICE)).inKeyguardRestrictedInputMode() )
+				while( ((KeyguardManager)getSystemService(Context.KEYGUARD_SERVICE)).inKeyguardRestrictedInputMode() )
 				{
-					Log.d("SDL", "libSDL: Waiting for screen orientation to change to " + (Globals.HorizontalOrientation ? "landscape" : "portrait") + ", and for disabling lockscreen mode");
+					Log.d("SDL", "libSDL: Waiting for disabling lockscreen mode");
 					try {
 						Thread.sleep(500);
 					} catch( Exception e ) {}

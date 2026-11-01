@@ -1145,8 +1145,10 @@ public class GLSurfaceView_SDL extends SurfaceView implements SurfaceHolder.Call
 					return false;
 				}
 
-				if ( Globals.HorizontalOrientation != (mWidth > mHeight) )
-					return true; // Wait until screen orientation changes
+				// Do not block rendering if screen aspect ratio / orientation does not match Globals.HorizontalOrientation
+				// (e.g. on modern letterboxed / foldable / rotated displays)
+				// if ( Globals.HorizontalOrientation != (mWidth > mHeight) )
+				// 	return true; // Wait until screen orientation changes
 
 				if (mPaused || (! mHasSurface)) {
 					return true;

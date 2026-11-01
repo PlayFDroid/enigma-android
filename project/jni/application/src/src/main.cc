@@ -972,59 +972,13 @@ AAssetManager * get_asset_manager()
 
 void screen_set_orientation(int o)
 {
-	JavaVM *vm = SDL_ANDROID_JavaVM();
-	JNIEnv *g_env = NULL;
-	vm->GetEnv((void **) &g_env, JNI_VERSION_1_6);
-
-    jclass sdlClass = g_env->FindClass("fr/seos/enigma/MainActivity");
-
-    if (sdlClass == 0) {
-        fprintf(stderr, "Bad class\n");
-        return;
-	}
-
-    jmethodID method = g_env->GetStaticMethodID(sdlClass, "forceScreenOrientation", "(I)V");
-
-	jint orientation = o;
-
-    if (method == 0) {
-        fprintf(stderr, "Bad method\n");
-        return;
-	}
-
-	fprintf(stderr, "Setting screen orientation to '%d'\n", o);
-
-    g_env->CallStaticVoidMethod(sdlClass, method, orientation);
-
-	g_env->DeleteLocalRef(sdlClass);
 }
 
 bool screen_is_inverted()
 {
-	JavaVM *vm = SDL_ANDROID_JavaVM();
-	JNIEnv *g_env = NULL;
-	vm->GetEnv((void **) &g_env, JNI_VERSION_1_6);
-
-    jclass sdlClass = g_env->FindClass("fr/seos/enigma/MainActivity");
-
-    if (sdlClass == 0) {
-        fprintf(stderr, "Bad class\n");
-        return false;
-	}
-
-    jmethodID method = g_env->GetStaticMethodID(sdlClass, "isScreenInverted", "()Z");
-
-    if (method == 0) {
-        fprintf(stderr, "Bad method\n");
-        return false;
-	}
-
-    jboolean inverted = g_env->CallStaticBooleanMethod(sdlClass, method);
-
-	g_env->DeleteLocalRef(sdlClass);
-
-	return inverted;
+    return false;
 }
+
 
 int main(int argc, char **argv)
 {

@@ -365,6 +365,14 @@ void ecl::Screen::set_caption(const char *str) {
 }
 
 void ecl::Screen::flush_updates() {
+#ifdef ANDROID
+    if (update_all_p || !m_dirtyrects.empty()) {
+        SDL_Flip(m_sdlsurface);
+        update_all_p = false;
+        m_dirtyrects.clear();
+        return;
+    }
+#else
     if (update_all_p) {
         SDL_UpdateRect(m_sdlsurface, 0, 0, 0, 0);  // update everything
         update_all_p = false;
@@ -377,6 +385,7 @@ void ecl::Screen::flush_updates() {
             sdl::copy_rect(rects[i], *j);
         SDL_UpdateRects(m_sdlsurface, rects.size(), &rects[0]);
     }
+#endif
     m_dirtyrects.clear();
 }
 
